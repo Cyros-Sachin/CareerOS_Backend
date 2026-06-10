@@ -1,0 +1,108 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id              String @id @default(uuid())
+
+  email           String @unique
+  passwordHash    String
+
+  emailVerified   Boolean @default(false)
+
+  role            Role @default(USER)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  profile         Profile?
+
+  resumes         Resume[]
+
+  refreshTokens   RefreshToken[]
+}
+
+model Profile {
+  id String @id @default(uuid())
+
+  userId String @unique
+
+  name String?
+
+  college String?
+  degree String?
+  graduationYear Int?
+
+  skillLevel SkillLevel?
+
+  workMode WorkMode?
+
+  careerGoals String[]
+
+  targetCompanies String[]
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Resume {
+  id String @id @default(uuid())
+
+  userId String
+
+  fileUrl String
+
+  status ResumeStatus @default(PROCESSING)
+
+  parsedData Json?
+
+  atsScore Int?
+
+  atsFeedback Json?
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model RefreshToken {
+  id String @id @default(uuid())
+
+  userId String
+
+  token String @unique
+
+  expiresAt DateTime
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum Role {
+  USER
+  ADMIN
+  INSTITUTION_ADMIN
+}
+
+enum SkillLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+enum WorkMode {
+  REMOTE
+  HYBRID
+  ONSITE
+}
+
+enum ResumeStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+}
