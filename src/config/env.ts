@@ -1,21 +1,29 @@
-import dotenv from "dotenv";
+import "dotenv/config";
+import { z } from "zod";
 
-dotenv.config();
+const envSchema = z.object({
+  DATABASE_URL: z.string().url(),
+  REDIS_URL: z.string(),
+  JWT_ACCESS_SECRET: z.string().min(32),
+  JWT_REFRESH_SECRET: z.string().min(32),
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_CALLBACK_URL: z.string().optional(),
+  RESEND_API_KEY: z.string().default(""),
+  FRONTEND_URL: z.string().default("http://localhost:3000"),
+  NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+  PORT: z.coerce.number().default(4000),
+});
 
-export const env = {
-  port: Number(process.env.PORT || 5000),
+function loadEnv() {
+  console.log(process.env.DATABASE_URL);
+  const parsed = envSchema.safeParse(process.env);
+  if (!parsed.success) {
+    console.error("❌ Invalid environment variables:", parsed.error.flatten().fieldErrors);
+    process.exit(1);
+  }
+  return parsed.data;
+}
 
-  databaseUrl: process.env.DATABASE_URL!,
-
-  jwtSecret: process.env.JWT_SECRET!,
-
-  accessTokenExpiry:
-    process.env.JWT_ACCESS_EXPIRES || "15m",
-
-  refreshTokenExpiry:
-    process.env.JWT_REFRESH_EXPIRES || "7d",
-
-  redisUrl: process.env.REDIS_URL!,
-
-  openAiKey: process.env.OPENAI_API_KEY!,
-};
+export const env = loadEnv();
+export type Env = z.infer<typeof envSchema>;

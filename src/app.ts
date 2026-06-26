@@ -1,42 +1,43 @@
 import express from "express";
 import cors from "cors";
-import helmet from "helmet";
-import compression from "compression";
-import morgan from "morgan";
+import cookieParser from "cookie-parser";
+import { createAuthRouter } from "./modules/auth/auth.routes";
+import { createOnboardingRouter } from "./modules/onboarding/onboarding.routes";
+import { errorHandler } from "./middleware/errorHandler";
+import { generalLimiter } from "./middleware/rateLimiter";
+import { pool } from "./db/pool";
+import { redisPing } from "./lib/redis";
+import { EmailService } from "./lib/email/email.service";
+import { ResendProvider } from "./lib/email/resend.provider";
 
-import authRoutes from "./modules/auth/auth.routes";
-import onboardingRoutes
-from "./modules/onboarding/onboarding.routes";
-import resumeRoutes
-from "./modules/resume/resume.routes";
-import dashboardRoutes from "./modules/dashboard/dashboard.routes";
+export function createApp(emailService?: EmailService) {
+  const app = express();
 
-const app = express();
+  app.use(cors({
+    origin: process.env.FRONTEND_URL || "http://localhost:3000",
+    credentials: true,
+  }));
+  app.use(express.json());
+  app.use(cookieParser());
 
-app.use(helmet());
-app.use(cors());
+  app.use("/api", generalLimiter);
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+  const mailer = emailService || new ResendProvider();
+  app.use("/api/auth", createAuthRouter(mailer));
+  app.use("/api/onboarding", createOnboardingRouter());
 
-app.use(compression());
-app.use(morgan("dev"));
+  app.get("/api/health", async (_req, res) => {
+    try {
+      await pool.query("SELECT 1");
+      const redisOk = await redisPing();
+      const status = redisOk ? "healthy" : "degraded (redis down)";
+      res.json({ status, redis: redisOk, database: true });
+    } catch {
+      res.status(503).json({ status: "unhealthy", database: false });
+    }
+  });
 
-app.get("/health", (_, res) => {
-  res.json({ status: "ok" });
-});
+  app.use(errorHandler);
 
-app.use("/api/auth", authRoutes);
-app.use(
-  "/api/onboarding",
-  onboardingRoutes
-);
-app.use(
-  "/api/resume",
-  resumeRoutes
-);
-app.use(
-  "/api/dashboard",
-  dashboardRoutes
-);
-export default app;
+  return app;
+}

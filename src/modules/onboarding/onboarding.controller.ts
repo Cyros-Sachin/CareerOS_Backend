@@ -1,57 +1,60 @@
-import {
-  Request,
-  Response,
-} from "express";
+import { Request, Response, NextFunction } from "express";
+import { OnboardingService } from "./onboarding.service";
 
-import {
-  saveOnboarding,
-  getProfile,
-} from "./onboarding.service";
+export class OnboardingController {
+  constructor(private onboardingService: OnboardingService) {}
 
-import { AuthRequest }
-  from "../../middleware/auth.middleware";
+  getStatus = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const status = await this.onboardingService.getStatus(req.user!.userId);
+      res.json(status);
+    } catch (err) {
+      next(err);
+    }
+  };
 
-import { onboardingSchema }
-  from "../../utils/validators";
+  updateStep1 = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      await this.onboardingService.updateStep1(req.user!.userId, req.body);
+      res.json({ message: "Step 1 saved" });
+    } catch (err) {
+      next(err);
+    }
+  };
 
-export async function saveProfile(
-  req: AuthRequest,
-  res: Response
-) {
-  try {
-    const parsed =
-      onboardingSchema.parse(
-        req.body
-      );
+  updateStep2 = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      await this.onboardingService.updateStep2(req.user!.userId, req.body.careerGoals);
+      res.json({ message: "Step 2 saved" });
+    } catch (err) {
+      next(err);
+    }
+  };
 
-    const profile =
-      await saveOnboarding(
-        req.user!.userId,
-        parsed
-      );
+  updateStep3 = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      await this.onboardingService.updateStep3(req.user!.userId, req.body.workPreferences, req.body.targetCompanies);
+      res.json({ message: "Step 3 saved" });
+    } catch (err) {
+      next(err);
+    }
+  };
 
-    res.json(profile);
-  } catch (err: any) {
-    res.status(400).json({
-      message: err.message,
-    });
-  }
-}
+  updateStep4 = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      await this.onboardingService.updateStep4(req.user!.userId, req.body.skillLevel);
+      res.json({ message: "Step 4 saved" });
+    } catch (err) {
+      next(err);
+    }
+  };
 
-export async function profile(
-  req: AuthRequest,
-  res: Response
-) {
-  try {
-    const data =
-      await getProfile(
-        req.user!.userId
-      );
-
-    res.json(data);
-  } catch (err: any) {
-    res.status(500).json({
-      message: err.message,
-    });
-  }
+  complete = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      await this.onboardingService.complete(req.user!.userId, req.body.skippedResume);
+      res.json({ message: "Onboarding completed!" });
+    } catch (err) {
+      next(err);
+    }
+  };
 }

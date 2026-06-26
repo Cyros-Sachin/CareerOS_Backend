@@ -1,150 +1,159 @@
-import { Request, Response } from "express";
+import { Request, Response, NextFunction } from "express";
+import { AuthService } from "./auth.service";
+import { GoogleOAuthService } from "./google-oauth.service";
+import { env } from "../../config/env";
+import { logger } from "../../lib/logger";
 
-import {
-  generateAccessToken,
-  generateRefreshToken,
-} from "../../utils/jwt";
-import { AuthRequest } from "../../middleware/auth.middleware";
-import { prisma } from "../../config/prisma";
+export class AuthController {
+  constructor(
+    private authService: AuthService,
+    private googleOAuthService: GoogleOAuthService
+  ) {}
 
-import {
-  loginUser,
-  registerUser,
-  saveRefreshToken,
-  refreshSession,
-  logoutUser,
-} from "./auth.service";
-
-export async function register(
-  req: Request,
-  res: Response
-) {
-  try {
-    const { email, password } =
-      req.body;
-
-    const user =
-      await registerUser(
-        email,
-        password
-      );
-
-    res.status(201).json(user);
-  } catch (err: any) {
-    res.status(400).json({
-      message: err.message,
-    });
-  }
-}
-
-export async function login(
-  req: Request,
-  res: Response
-) {
-  try {
-    const { email, password } =
-      req.body;
-
-    const user =
-      await loginUser(
-        email,
-        password
-      );
-
-    const payload = {
-      userId: user.id,
-      email: user.email,
-      role: user.role,
-    };
-
-    const accessToken =
-      generateAccessToken(payload);
-
-    const refreshToken =
-      generateRefreshToken(payload);
-
-    await saveRefreshToken(
-      user.id,
-      refreshToken
-    );
-
-    res.json({
-      accessToken,
-      refreshToken,
-    });
-  } catch (err: any) {
-    res.status(400).json({
-      message: err.message,
-    });
-  }
-}
-
-export async function me(
-  req: AuthRequest,
-  res: Response
-) {
-  try {
-    const user =
-      await prisma.user.findUnique({
-        where: {
-          id: req.user?.userId,
-        },
-        select: {
-          id: true,
-          email: true,
-          role: true,
-          createdAt: true,
-        },
+  register = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      await this.authService.register(req.body.email, req.body.password, req.body.name);
+      res.status(201).json({
+        message: "Registration successful. Please check your email to verify your account.",
       });
+    } catch (err) {
+      next(err);
+    }
+  };
 
-    res.json(user);
-  } catch (err: any) {
-    res.status(500).json({
-      message: err.message,
-    });
-  }
-}
+  verifyEmail = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const token = req.query.token as string;
+      if (!token) {
+        res.status(400).json({ error: { code: "MISSING_TOKEN", message: "Verification token is required" } });
+        return;
+      }
+      await this.authService.verifyEmail(token);
+      res.json({ message: "Email verified successfully. You can now log in." });
+    } catch (err) {
+      next(err);
+    }
+  };
 
-export async function refresh(
-  req: Request,
-  res: Response
-) {
-  try {
-    const { refreshToken } =
-      req.body;
+  resendVerification = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      await this.authService.resendVerification(req.body.email);
+      res.json({
+        message: "If that email exists, a verification email has been sent.",
+      });
+    } catch (err) {
+      next(err);
+    }
+  };
 
-    const tokens =
-      await refreshSession(
-        refreshToken
-      );
+  login = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const result = await this.authService.login(req.body.email, req.body.password);
+      res.cookie("refreshToken", result.refreshToken, {
+        httpOnly: true,
+        secure: env.NODE_ENV === "production",
+        sameSite: "strict",
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+        path: "/api/auth",
+      });
+      res.json({
+        accessToken: result.accessToken,
+        user: result.user,
+      });
+    } catch (err) {
+      next(err);
+    }
+  };
 
-    res.json(tokens);
-  } catch (err: any) {
-    res.status(401).json({
-      message: err.message,
-    });
-  }
-}
+  googleAuth = async (_req: Request, res: Response): Promise<void> => {
+    const url = this.googleOAuthService.getAuthUrl();
+    res.redirect(url);
+  };
 
-export async function logout(
-  req: Request,
-  res: Response
-) {
-  try {
-    const { refreshToken } =
-      req.body;
+  googleCallback = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const code = req.query.code as string;
+      if (!code) {
+        res.status(400).json({ error: { code: "MISSING_CODE", message: "Authorization code is required" } });
+        return;
+      }
+      const result = await this.googleOAuthService.handleCallback(code);
+      res.cookie("refreshToken", result.refreshToken, {
+        httpOnly: true,
+        secure: env.NODE_ENV === "production",
+        sameSite: "strict",
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+        path: "/api/auth",
+      });
+      res.json({
+        accessToken: result.accessToken,
+        user: result.user,
+      });
+    } catch (err) {
+      next(err);
+    }
+  };
 
-    await logoutUser(
-      refreshToken
-    );
+  refresh = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const refreshToken = req.cookies?.refreshToken;
+      if (!refreshToken) {
+        res.status(401).json({ error: { code: "NO_REFRESH_TOKEN", message: "No refresh token provided" } });
+        return;
+      }
+      const result = await this.authService.refresh(refreshToken);
+      res.cookie("refreshToken", result.refreshToken, {
+        httpOnly: true,
+        secure: env.NODE_ENV === "production",
+        sameSite: "strict",
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+        path: "/api/auth",
+      });
+      res.json({ accessToken: result.accessToken });
+    } catch (err) {
+      next(err);
+    }
+  };
 
-    res.json({
-      message:
-        "Logged out successfully",
-    });
-  } catch (err: any) {
-    res.status(400).json({
-      message: err.message,
-    });
-  }
+  logout = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const refreshToken = req.cookies?.refreshToken;
+      if (refreshToken && req.user) {
+        await this.authService.logout(req.user.userId, refreshToken);
+      }
+      res.clearCookie("refreshToken", { path: "/api/auth" });
+      res.json({ message: "Logged out successfully" });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  me = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      const profile = await this.authService.getMe(req.user!.userId);
+      res.json(profile);
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  forgotPassword = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      await this.authService.forgotPassword(req.body.email);
+      res.json({
+        message: "If that email exists, a password reset code has been sent.",
+      });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  resetPassword = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    try {
+      await this.authService.resetPassword(req.body.email, req.body.otp, req.body.newPassword);
+      res.json({ message: "Password reset successfully. Please log in with your new password." });
+    } catch (err) {
+      next(err);
+    }
+  };
 }
