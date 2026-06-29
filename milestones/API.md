@@ -131,6 +131,8 @@ When exceeded (429):
 | `POST /forgot-password` | 5 | 1 hour | IP + email |
 | `POST /reset-password` | 10 | 1 hour | IP |
 | `POST /resume/upload-url` | 10 | 1 hour | IP |
+| `POST /roadmap/generate` | 5 | 1 hour | User ID |
+| `POST /roadmap/:id/regenerate` | 5 | 1 hour | User ID |
 
 ---
 
@@ -985,3 +987,318 @@ Delete a resume (soft: removes DB row). Client should also remove the file from 
 | `RESUME_NOT_FOUND` | 404 | Resume ID not found |
 | `INVALID_STATUS` | 400 | Resume is not in the expected state for the operation |
 | `FORBIDDEN` | 403 | Attempting to access a resume owned by another user |
+
+---
+
+## 11. Skills Endpoints
+
+All skills endpoints require `Authorization: Bearer <accessToken>`.
+
+### GET `/api/skills`
+
+Browse/search the skills taxonomy.
+
+**Query params:**
+| Param | Type | Description |
+|-------|------|-------------|
+| `category` | string | Filter by category (optional) |
+| `search` | string | Search by name or alias (optional) |
+
+**Success (200):**
+```json
+[
+  {
+    "id": "uuid",
+    "name": "React",
+    "category": "Frontend",
+    "aliases": ["ReactJS", "React.js"],
+    "description": null,
+    "created_at": "2026-06-29T..."
+  }
+]
+```
+
+---
+
+### GET `/api/skills/categories`
+
+List all skill categories with counts.
+
+**Success (200):**
+```json
+[
+  { "category": "Frontend", "count": 48 },
+  { "category": "Backend", "count": 47 }
+]
+```
+
+---
+
+## 12. Gap Analysis Endpoints
+
+All gap analysis endpoints require `Authorization: Bearer <accessToken>`.
+
+### GET `/api/gaps/:userId`
+
+Analyze skill gaps between a user's current skills (from active resume) and target role requirements.
+
+**Query params:**
+| Param | Type | Description |
+|-------|------|-------------|
+| `targetRole` | string | **Required.** Target role name (e.g. "SDE", "Data Analyst") |
+
+**Success (200):**
+```json
+{
+  "currentSkills": ["JavaScript", "React", "Python"],
+  "missingSkills": [
+    {
+      "skillId": "uuid",
+      "skillName": "System Design",
+      "category": "DSA & CS Fundamentals",
+      "importanceWeight": 0.9,
+      "minProficiency": "mid",
+      "estLearningHours": 100
+    }
+  ],
+  "matchPercent": 60
+}
+```
+
+**matchPercent** = `((totalRequired - missing) / totalRequired) × 100`, rounded.
+
+---
+
+## 13. Roadmap Endpoints
+
+All roadmap endpoints require `Authorization: Bearer <accessToken>`.
+
+### POST `/api/roadmap/generate`
+
+Generate a new month-by-month learning roadmap. Runs gap analysis, calls AI, persists, and marks any prior roadmap for that role as `superseded`.
+
+**Rate limited:** 5/hour/user
+
+**Request:**
+```json
+{
+  "targetRole": "SDE",
+  "hoursPerWeek": 15
+}
+```
+
+**Success (201):**
+```json
+{
+  "id": "uuid",
+  "user_id": "uuid",
+  "target_role": "SDE",
+  "hours_per_week": 15,
+  "status": "active",
+  "generated_from_skill_level": "mid",
+  "created_at": "2026-06-29T...",
+  "items": [
+    {
+      "id": "uuid",
+      "month_number": 1,
+      "topic": "Data Structures & Algorithms Deep Dive",
+      "resources": [
+        { "type": "course", "url": "https://...", "title": "Algorithms Course", "isAffiliate": false }
+      ],
+      "project_assignment": "Implement a sorting visualizer",
+      "estimated_hours": 25,
+      "is_complete": false,
+      "completed_at": null
+    }
+  ],
+  "gapAnalysis": {
+    "matchPercent": 60,
+    "missingSkills": [...]
+  }
+}
+```
+
+**Errors:**
+| Status | Code | Meaning |
+|--------|------|---------|
+| 400 | `VALIDATION_ERROR` | Invalid body |
+| 429 | `RATE_LIMITED` | Too many generation requests |
+
+---
+
+### GET `/api/roadmap/:userId`
+
+Get the active roadmap for a user.
+
+**Query params:**
+| Param | Type | Description |
+|-------|------|-------------|
+| `targetRole` | string | Filter by target role (optional) |
+
+**Success (200):**
+```json
+{
+  "id": "uuid",
+  "user_id": "uuid",
+  "target_role": "SDE",
+  "status": "active",
+  "items": [...]
+}
+```
+
+**Errors:**
+| Status | Code | Meaning |
+|--------|------|---------|
+| 404 | `ROADMAP_NOT_FOUND` | No active roadmap found |
+
+---
+
+### GET `/api/roadmap/detail/:roadmapId`
+
+Full roadmap detail with all items.
+
+**Success (200):** Same shape as POST `/generate` response (without gapAnalysis).
+
+---
+
+### PATCH `/api/roadmap/items/:itemId/complete`
+
+Toggle a roadmap item's completion status.
+
+**Request:**
+```json
+{
+  "isComplete": true
+}
+```
+
+**Success (200):**
+```json
+{
+  "id": "uuid",
+  "roadmap_id": "uuid",
+  "month_number": 1,
+  "topic": "Data Structures & Algorithms Deep Dive",
+  "is_complete": true,
+  "completed_at": "2026-06-29T..."
+}
+```
+
+Setting `isComplete: false` clears `completed_at`.
+
+---
+
+### POST `/api/roadmap/:roadmapId/regenerate`
+
+Manually regenerate a roadmap. Same flow as generate — gap analysis → AI call → persist. Old roadmap marked `superseded`.
+
+**Rate limited:** 5/hour/user
+
+**Request:**
+```json
+{
+  "hoursPerWeek": 20
+}
+```
+
+`hoursPerWeek` is optional — defaults to the original value.
+
+**Success (201):** Same shape as POST `/generate`.
+
+---
+
+### GET `/api/roadmap/:roadmapId/export.pdf`
+
+**Not yet implemented.** Returns 501.
+
+**Success (501):**
+```json
+{
+  "error": {
+    "code": "NOT_IMPLEMENTED",
+    "message": "PDF export is not yet available"
+  }
+}
+```
+
+---
+
+## 14. Error Codes Reference (Additions)
+
+| Code | Status | Meaning |
+|------|--------|---------|
+| `ROADMAP_NOT_FOUND` | 404 | No active roadmap found for user |
+| `ITEM_NOT_FOUND` | 404 | Roadmap item not found |
+| `NOT_IMPLEMENTED` | 501 | Endpoint not yet implemented |
+
+---
+
+## 15. Rate Limiting (Updated)
+
+| Endpoint | Limit | Window | Keyed By |
+|----------|-------|--------|----------|
+| `POST /api/roadmap/generate` | 5 | 1 hour | User ID |
+| `POST /api/roadmap/:roadmapId/regenerate` | 5 | 1 hour | User ID |
+
+---
+
+## 16. Frontend Integration — Roadmap Flow
+
+```
+Client                          API                        AI Provider
+  │  POST /roadmap/generate      │                           │
+  │─────────────────────────────►│                           │
+  │                              │  Fetch user + resume      │
+  │                              │  Run gap analysis         │
+  │                              │  (exact match → pgvector  │
+  │                              │   → optional LLM tiebreak)│
+  │                              │                           │
+  │                              │  Build prompt → LLM       │
+  │                              │──────────────────────────►│
+  │                              │◄──────────────────────────│
+  │                              │  (forced JSON roadmap)    │
+  │                              │                           │
+  │                              │  Mark prior superseded    │
+  │                              │  Insert roadmap + items   │
+  │                              │  (single transaction)     │
+  │◄─────────────────────────────│ 201 { roadmap, items }    │
+```
+
+### Gap Analysis + Roadmap UI Integration
+
+```typescript
+// 1. Browse skills for onboarding autocomplete
+const skills = await apiClient("/api/skills?search=React");
+const categories = await apiClient("/api/skills/categories");
+
+// 2. Check gap analysis for a target role
+const gap = await apiClient(`/api/gaps/${userId}?targetRole=SDE`);
+// gap.matchPercent — show as a percentage bar
+// gap.missingSkills — sorted by importance
+
+// 3. Generate roadmap
+const roadmap = await apiClient("/api/roadmap/generate", {
+  method: "POST",
+  body: JSON.stringify({ targetRole: "SDE", hoursPerWeek: 15 }),
+});
+
+// 4. Display roadmap months
+roadmap.items.forEach((item) => {
+  // item.month_number — timeline
+  // item.topic — learning topic
+  // item.resources — links to docs/videos/courses
+  // item.project_assignment — practical project
+});
+
+// 5. Toggle completion
+await apiClient(`/api/roadmap/items/${itemId}/complete`, {
+  method: "PATCH",
+  body: JSON.stringify({ isComplete: true }),
+});
+
+// 6. Regenerate if goals/skill level change
+await apiClient(`/api/roadmap/${roadmapId}/regenerate`, {
+  method: "POST",
+  body: JSON.stringify({ hoursPerWeek: 20 }),
+});
+```

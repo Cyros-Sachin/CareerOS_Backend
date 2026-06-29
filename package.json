@@ -9,6 +9,7 @@
     "worker": "tsx src/worker.ts",
     "migrate": "tsx src/db/migrate.ts",
     "seed": "tsx scripts/seed.ts",
+    "seed:skills": "tsx scripts/seed-skills.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

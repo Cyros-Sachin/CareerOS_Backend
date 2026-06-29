@@ -1,2 +1,2 @@
 ALTER TABLE password_reset_otps
-  ADD COLUMN created_at TIMESTAMP DEFAULT NOW();
+  ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW();

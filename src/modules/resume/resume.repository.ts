@@ -160,8 +160,8 @@ export async function getRoleKeywordCountForUser(userId: string): Promise<number
 }
 
 export async function getAllKeywords(): Promise<string[]> {
-  const rows = await query<{ keyword: string }>("SELECT DISTINCT keyword FROM role_keywords");
-  return rows.map((r) => r.keyword);
+  const rows = await query<{ name: string }>("SELECT DISTINCT name FROM skills ORDER BY name");
+  return rows.map((r) => r.name);
 }
 
 export function getCurrentBillingMonth(): string {

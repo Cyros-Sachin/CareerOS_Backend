@@ -36,6 +36,18 @@ const envSchema = z.object({
   RESUME_MAX_SIZE_MB: z.coerce.number().default(5),
   RESUME_MAX_PAGES: z.coerce.number().default(3),
   FREE_TIER_MONTHLY_SCAN_LIMIT: z.coerce.number().default(3),
+
+  // Milestone 3 — Embeddings & Gap Analysis
+  EMBEDDING_PROVIDER: z.enum(["gemini", "openai"]).default("gemini"),
+  GEMINI_EMBEDDING_MODEL: z.string().default("text-embedding-004"),
+  OPENAI_EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
+  GAP_SEMANTIC_MATCH_THRESHOLD: z.coerce.number().default(0.85),
+  GAP_ANALYSIS_LLM_TIEBREAK: z.coerce.boolean().default(false),
+
+  // Milestone 3 — Roadmap Generation
+  ROADMAP_MAX_MONTHS: z.coerce.number().default(12),
+  ROADMAP_GENERATE_RATE_LIMIT_PER_HOUR: z.coerce.number().default(5),
+  AFFILIATE_REF_TAG: z.string().default("careeros"),
 })
 
   .superRefine((data, ctx) => {
