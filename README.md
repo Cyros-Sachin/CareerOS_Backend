@@ -1,13 +1,16 @@
-# CareerOS Backend — Milestone 1
+# CareerOS Backend — Milestones 1 & 2
 
-Authentication + Onboarding API for CareerOS, an AI career platform for Indian college students.
+Authentication + Onboarding + Resume Engine API for CareerOS, an AI career platform for Indian college students.
 
 ## Stack
 
 - **Node.js 20 + TypeScript** — Express, raw SQL via `pg`
 - **Postgres 16** (Docker, pgvector extension)
-- **Redis 7** (Docker, for rate limiting)
+- **Redis 7** (Docker, for rate limiting + BullMQ job queue)
 - **Mailhog** (Docker, local SMTP catcher for dev)
+- **BullMQ** — Resume parsing job queue (runs on same Redis)
+- **AWS S3** — Pre-signed URL resume uploads
+- **AI Resume Parsing** — Provider-agnostic (`AI_PROVIDER` env var), defaults to Gemini 2.5 Flash, falls back to OpenAI GPT-4o
 
 ## Quick Start
 
@@ -59,7 +62,15 @@ Creates:
 - `test@careeros.app` / `TestPass1` (student)
 - `admin@careeros.app` / `TestPass1` (admin)
 
-### 7. Run Tests
+### 7. Start Worker (separate terminal)
+
+```bash
+npm run worker
+```
+
+The worker processes resume parsing jobs from the BullMQ queue. Runs independently of the API server.
+
+### 8. Run Tests
 
 ```bash
 npm test
@@ -96,6 +107,19 @@ npm test
 | PATCH | `/api/onboarding/step-4` | Save skill level |
 | POST | `/api/onboarding/complete` | Complete onboarding |
 
+### Resume (JWT Required)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/resume/upload-url` | Get pre-signed S3 upload URL |
+| POST | `/api/resume/:id/confirm` | Confirm upload, enqueue parsing |
+| GET | `/api/resume/:id/status` | Poll processing status |
+| GET | `/api/resume/:id` | Full resume detail + parsed data + score |
+| GET | `/api/resume/:id/score` | Score + dimension breakdown only |
+| GET | `/api/resume/history` | Score history for week-over-week graph |
+| GET | `/api/resume/list` | All resume versions for current user |
+| PATCH | `/api/resume/:id/activate` | Set as active resume |
+| DELETE | `/api/resume/:id` | Delete resume |
+
 ### Health
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -105,18 +129,21 @@ npm test
 
 ```
 src/
-├── server.ts              # Entrypoint
+├── server.ts              # API entrypoint
+├── worker.ts              # BullMQ worker entrypoint (separate process)
 ├── app.ts                 # Express app assembly
 ├── config/env.ts          # Zod-validated env vars
 ├── db/
 │   ├── pool.ts            # pg Pool singleton
 │   ├── migrate.ts         # Migration runner
-│   └── migrations/        # SQL migration files
+│   └── migrations/        # SQL migration files (001-009)
 ├── modules/
-│   ├── auth/              # Auth module (routes, controller, service, repository, validators)
-│   └── onboarding/        # Onboarding module
+│   ├── auth/              # Auth module
+│   ├── onboarding/        # Onboarding module
+│   └── resume/            # Resume module (upload, parsing, scoring)
+├── jobs/                  # BullMQ queue + job processors
 ├── middleware/             # authenticate, errorHandler, rateLimiter, validate
-├── lib/                   # jwt, password, otp, redis, logger, email
+├── lib/                   # jwt, password, otp, redis, logger, email, s3, ai/, text-extraction
 └── types/                 # Express type augmentation
 ```
 
@@ -129,3 +156,5 @@ src/
 - Rate limiting: Redis-backed per-endpoint limits
 - Anti-enumeration: generic responses for register/forgot-password
 - httpOnly refresh token cookie (not exposed to JS)
+- S3 pre-signed URLs: file never passes through API server
+- File validation: magic bytes checked server-side after extraction

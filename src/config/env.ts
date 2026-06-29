@@ -13,7 +13,47 @@ const envSchema = z.object({
   FRONTEND_URL: z.string().default("http://localhost:3000"),
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
   PORT: z.coerce.number().default(4000),
-});
+
+  // Milestone 2 — Resume Engine
+  AWS_REGION: z.string().default("ap-south-1"),
+  AWS_ACCESS_KEY_ID: z.string().optional(),
+  AWS_SECRET_ACCESS_KEY: z.string().optional(),
+  S3_BUCKET_NAME: z.string().default("careeros-resumes"),
+
+  // AI Provider selection
+  AI_PROVIDER: z.enum(["gemini", "openai"]).default("gemini"),
+
+  // Google Gemini (default provider)
+  GEMINI_API_KEY: z.string().optional(),
+  GEMINI_MODEL: z.string().default("gemini-2.5-flash"),
+  GEMINI_TIMEOUT_MS: z.coerce.number().default(30000),
+
+  // OpenAI (fallback / production alternative)
+  OPENAI_API_KEY: z.string().optional(),
+  OPENAI_MODEL: z.string().default("gpt-4o"),
+  OPENAI_TIMEOUT_MS: z.coerce.number().default(30000),
+
+  RESUME_MAX_SIZE_MB: z.coerce.number().default(5),
+  RESUME_MAX_PAGES: z.coerce.number().default(3),
+  FREE_TIER_MONTHLY_SCAN_LIMIT: z.coerce.number().default(3),
+})
+
+  .superRefine((data, ctx) => {
+    if (data.AI_PROVIDER === "gemini" && !data.GEMINI_API_KEY) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "GEMINI_API_KEY is required when AI_PROVIDER is 'gemini'",
+        path: ["GEMINI_API_KEY"],
+      });
+    }
+    if (data.AI_PROVIDER === "openai" && !data.OPENAI_API_KEY) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "OPENAI_API_KEY is required when AI_PROVIDER is 'openai'",
+        path: ["OPENAI_API_KEY"],
+      });
+    }
+  });
 
 function loadEnv() {
   console.log(process.env.DATABASE_URL);

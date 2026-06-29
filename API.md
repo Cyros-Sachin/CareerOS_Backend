@@ -14,6 +14,8 @@
 6. [Health Check](#6-health-check)
 7. [Frontend Integration Guide](#7-frontend-integration-guide)
 8. [Error Codes Reference](#8-error-codes-reference)
+9. [Resume Engine Endpoints](#9-resume-engine-endpoints)
+10. [Error Codes Reference (Additions)](#10-error-codes-reference-additions)
 
 ---
 
@@ -128,6 +130,7 @@ When exceeded (429):
 | `POST /resend-verification` | 3 | 1 hour | email |
 | `POST /forgot-password` | 5 | 1 hour | IP + email |
 | `POST /reset-password` | 10 | 1 hour | IP |
+| `POST /resume/upload-url` | 10 | 1 hour | IP |
 
 ---
 
@@ -793,3 +796,192 @@ GET /api/onboarding/status
 | Refresh Token | `refreshToken` | `/api/auth` | ✅ Yes | ✅ (prod) | `Strict` | 7 days |
 
 **`credentials: "include"`** must be set on all frontend `fetch()` calls for cookies to be sent and received.
+
+---
+
+## 9. Resume Engine Endpoints
+
+All resume endpoints require `Authorization: Bearer <accessToken>`.
+
+### POST `/api/resume/upload-url`
+
+Request a pre-signed URL to upload a resume directly to AWS S3.
+
+**Request:**
+```json
+{
+  "filename": "resume.pdf",
+  "mimeType": "application/pdf",
+  "fileSizeBytes": 500000
+}
+```
+
+**Valid mimeTypes:** `application/pdf`, `application/vnd.openxmlformats-officedocument.wordprocessingml.document`
+
+**File limits:** ≤ 5MB, max 3 pages (page count checked server-side after extraction)
+
+**Success (200):**
+```json
+{
+  "uploadUrl": "https://s3.ap-south-1.amazonaws.com/careeros-resumes/resumes/...?X-Amz-Signature=...",
+  "resumeId": "uuid",
+  "fileKey": "resumes/{userId}/{resumeId}.pdf"
+}
+```
+
+**Errors:**
+| Status | Code | Meaning |
+|--------|------|---------|
+| 400 | `VALIDATION_ERROR` | Invalid mime type or file too large |
+| 403 | `SCAN_LIMIT_REACHED` | Free tier monthly scan limit exceeded |
+| 429 | `RATE_LIMITED` | Too many upload URL requests |
+
+---
+
+### POST `/api/resume/:id/confirm`
+
+Call after the client successfully PUTs the file to S3. Flipping status to `processing` and enqueues a BullMQ parsing job.
+
+**No request body needed.**
+
+**Success (202):** `{ "message": "Resume upload confirmed. Parsing started." }`
+
+---
+
+### GET `/api/resume/:id/status`
+
+Poll the processing status of a resume.
+
+**Success (200):**
+```json
+{
+  "status": "processing",
+  "failureReason": null
+}
+```
+
+**Status values:** `uploaded` → `processing` → `parsed` → `scored` | `failed`
+
+---
+
+### GET `/api/resume/:id`
+
+Full resume detail including parsed data and score breakdown.
+
+**Success (200):**
+```json
+{
+  "id": "uuid",
+  "originalFilename": "resume.pdf",
+  "fileUrl": "https://...",
+  "status": "scored",
+  "failureReason": null,
+  "pageCount": 2,
+  "parsedData": {
+    "skills": ["JavaScript", "React"],
+    "projects": [],
+    "education": [],
+    "experience": [],
+    "certifications": []
+  },
+  "atsScore": 72,
+  "dimensionScores": {
+    "quality": { "raw": 80, "weight": 0.15, "weighted": 12 },
+    "ats": { "raw": 60, "weight": 0.25, "weighted": 15 },
+    "projects": { "raw": 50, "weight": 0.25, "weighted": 12.5 },
+    "experience": { "raw": 70, "weight": 0.20, "weighted": 14 },
+    "interview": { "raw": 45, "weight": 0.10, "weighted": 4.5 },
+    "market": { "raw": 65, "weight": 0.05, "weighted": 3.25 }
+  },
+  "suggestions": [
+    "Add projects to showcase your development skills",
+    "Add a GitHub link to your project"
+  ],
+  "isActive": false,
+  "createdAt": "2026-06-28T...",
+  "updatedAt": "2026-06-28T..."
+}
+```
+
+---
+
+### GET `/api/resume/:id/score`
+
+Lighter payload — score and dimension breakdown only.
+
+**Success (200):**
+```json
+{
+  "atsScore": 72,
+  "dimensionScores": { ... },
+  "status": "scored"
+}
+```
+
+---
+
+### GET `/api/resume/history?limit=50`
+
+Score history across all resumes — feeds the week-over-week graph.
+
+**Success (200):**
+```json
+[
+  {
+    "resume_id": "uuid",
+    "ats_score": 72,
+    "dimension_scores": { ... },
+    "recorded_at": "2026-06-28T..."
+  }
+]
+```
+
+---
+
+### GET `/api/resume/list`
+
+List all resume versions for the current user.
+
+**Success (200):**
+```json
+[
+  {
+    "id": "uuid",
+    "originalFilename": "resume.pdf",
+    "status": "scored",
+    "atsScore": 72,
+    "isActive": true,
+    "createdAt": "2026-06-28T...",
+    "updatedAt": "2026-06-28T..."
+  }
+]
+```
+
+---
+
+### PATCH `/api/resume/:id/activate`
+
+Set this resume as the active version. Unsets the previously active resume in the same transaction.
+
+**No request body needed.**
+
+**Success (200):** `{ "message": "Resume activated" }`
+
+---
+
+### DELETE `/api/resume/:id`
+
+Delete a resume (soft: removes DB row). Client should also remove the file from S3 if desired.
+
+**Success (200):** `{ "message": "Resume deleted" }`
+
+---
+
+## 10. Error Codes Reference (Additions)
+
+| Code | Status | Meaning |
+|------|--------|---------|
+| `SCAN_LIMIT_REACHED` | 403 | Free tier monthly scan limit exceeded |
+| `RESUME_NOT_FOUND` | 404 | Resume ID not found |
+| `INVALID_STATUS` | 400 | Resume is not in the expected state for the operation |
+| `FORBIDDEN` | 403 | Attempting to access a resume owned by another user |

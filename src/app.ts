@@ -3,6 +3,7 @@ import cors from "cors";
 import cookieParser from "cookie-parser";
 import { createAuthRouter } from "./modules/auth/auth.routes";
 import { createOnboardingRouter } from "./modules/onboarding/onboarding.routes";
+import { createResumeRouter } from "./modules/resume/resume.routes";
 import { errorHandler } from "./middleware/errorHandler";
 import { generalLimiter } from "./middleware/rateLimiter";
 import { pool } from "./db/pool";
@@ -17,7 +18,7 @@ export function createApp(emailService?: EmailService) {
     origin: process.env.FRONTEND_URL || "http://localhost:3000",
     credentials: true,
   }));
-  app.use(express.json());
+  app.use(express.json({ limit: "1mb" }));
   app.use(cookieParser());
 
   app.use("/api", generalLimiter);
@@ -25,6 +26,7 @@ export function createApp(emailService?: EmailService) {
   const mailer = emailService || new ResendProvider();
   app.use("/api/auth", createAuthRouter(mailer));
   app.use("/api/onboarding", createOnboardingRouter());
+  app.use("/api/resume", createResumeRouter());
 
   app.get("/api/health", async (_req, res) => {
     try {
