@@ -20,6 +20,9 @@ export interface UserRow {
   failed_login_attempts: number;
   locked_until: string | null;
   role: string;
+  institution_id: string | null;
+  batch_id: string | null;
+  institution_data_sharing_consent: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -197,11 +200,12 @@ export async function markOtpUsed(id: string): Promise<void> {
 
 export async function getPublicUserProfile(userId: string) {
   return queryOne(
-    `SELECT id, email, name, email_verified, college, degree, graduation_year,
-            career_goals, work_preferences, target_companies, skill_level,
-            onboarding_step, onboarding_completed, subscription_tier, role,
-            created_at, updated_at
-     FROM users WHERE id = $1`,
+    `SELECT u.id, u.email, u.name, u.email_verified, u.college, u.degree, u.graduation_year,
+            u.career_goals, u.work_preferences, u.target_companies, u.skill_level,
+            u.onboarding_step, u.onboarding_completed, u.subscription_tier, u.role,
+            u.institution_id, u.batch_id, u.institution_data_sharing_consent,
+            u.created_at, u.updated_at
+     FROM users u WHERE u.id = $1`,
     [userId]
   );
 }

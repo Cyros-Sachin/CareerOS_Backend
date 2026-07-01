@@ -1,6 +1,7 @@
 import { OAuth2Client } from "google-auth-library";
 import { env } from "../../config/env";
 import { signAccessToken } from "../../lib/jwt";
+import { InstitutionMatchingService } from "../college/institution-matching.service";
 import { AuthService } from "./auth.service";
 import * as repo from "./auth.repository";
 import { logger } from "../../lib/logger";
@@ -13,6 +14,7 @@ interface GoogleProfile {
 
 export class GoogleOAuthService {
   private client: OAuth2Client;
+  private institutionMatching = new InstitutionMatchingService();
 
   constructor(private authService: AuthService) {
     this.client = new OAuth2Client(
@@ -79,6 +81,7 @@ export class GoogleOAuthService {
     });
 
     await repo.markEmailVerified(user.id);
+    await this.institutionMatching.linkUserToInstitution(user.id, profile.email);
 
     return this.signInUser(user);
   }

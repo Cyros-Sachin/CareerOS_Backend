@@ -14,6 +14,9 @@ import { OpenAIMentorProvider } from "./openai-mentor.provider";
 import type { InterviewAIService } from "./interview-question-gen.interface";
 import { GeminiInterviewProvider } from "./gemini-interview.provider";
 import { OpenAIInterviewProvider } from "./openai-interview.provider";
+import type { JobExtractionService } from "./job-extraction.interface";
+import { GeminiJobExtractionProvider } from "./gemini-job-extraction.provider";
+import { OpenAIJobExtractionProvider } from "./openai-job-extraction.provider";
 
 function createResumeParser(): ResumeParserService {
   switch (env.AI_PROVIDER) {
@@ -54,6 +57,17 @@ export function createMentorChatService(): MentorChatService {
       return new GeminiMentorProvider();
     case "openai":
       return new OpenAIMentorProvider();
+    default:
+      throw new Error(`Unknown AI_PROVIDER: ${env.AI_PROVIDER}. Use "gemini" or "openai".`);
+  }
+}
+
+export function createJobExtractionService(): JobExtractionService {
+  switch (env.AI_PROVIDER) {
+    case "gemini":
+      return new GeminiJobExtractionProvider();
+    case "openai":
+      return new OpenAIJobExtractionProvider();
     default:
       throw new Error(`Unknown AI_PROVIDER: ${env.AI_PROVIDER}. Use "gemini" or "openai".`);
   }

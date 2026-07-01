@@ -274,35 +274,423 @@ Read-only public profile analysis via GitHub REST API. No OAuth required. Option
 | 017 | `interview_questions` table with unique constraint on `(session_id, question_order)` |
 | 018 | `interview_answers` table with JSONB scores, feedback, and model answers |
 
-### Scoring Dimensions
+---
 
-| Dimension | Technical | System Design | HR |
-|-----------|-----------|---------------|-----|
-| Correctness / Soundness | Algorithm correctness, edge cases | Design meets requirements | Addresses the question |
-| Complexity / Trade-off Awareness | Time/space complexity | Scalability, trade-offs | Depth of reflection |
-| Communication Clarity | Approach explanation | Design rationale clarity | Structure (STAR) |
-| Best Practices | Code style, naming | Patterns (caching, sharding) | Professionalism, examples |
-| Completeness | Full solution | Major components covered | All parts answered |
+## Milestone 6: Job Matching
+
+**Scope:** Job ingestion from Indeed + Wellfound APIs, pgvector-based job matching using resume profile embeddings, manual job description scoring, AI-powered resume tailoring per job, application tracking pipeline, and a BullMQ cron-based ingestion worker.
+
+### Implemented Features
+
+| Feature | Status |
+|---------|--------|
+| `jobs` table with pgvector JD embeddings (`job_source`, `company_type` enums) | ✅ |
+| `job_skills` join table with `skill_importance` enum | ✅ |
+| `job_applications` table with `application_status` enum | ✅ |
+| `tailored_resumes` table for storing per-job tailored content | ✅ |
+| `profile_embedding` column on `resumes` (pgvector, computed at activation time) | ✅ |
+| pgvector cosine similarity matching (normalized 0-100, gated on `ats_score >= 70`) | ✅ |
+| Manual job paste endpoint with AI skill extraction + instant match scoring | ✅ |
+| Resume tailoring via AI (rewrites resume content to match job requirements) | ✅ |
+| Job detail endpoint with missing skills analysis per user | ✅ |
+| Application CRUD (apply, update status, list with optional status filter) | ✅ |
+| Owner-only access on applications and tailored resumes (403 cross-user) | ✅ |
+| Indeed Publisher API connector (job search + fetch) | ✅ |
+| Wellfound API connector (job search + fetch) | ✅ |
+| BullMQ ingestion worker with repeatable cron job (`JOBS_INGESTION_CRON`) | ✅ |
+| Redis caching for match results (SHA-256 keyed, configurable TTL) | ✅ |
+| Rate limiting on manual job (10/hr/user) and tailor-resume (5/hr/user) | ✅ |
+
+### Routes
+
+| Method | Endpoint | Auth | Rate Limited |
+|--------|----------|------|-------------|
+| GET | `/api/jobs/matches` | JWT + score gate | No |
+| POST | `/api/jobs/manual` | JWT + score gate | 10/hr/user |
+| GET | `/api/jobs/:jobId` | JWT | No |
+| POST | `/api/jobs/:jobId/tailor-resume` | JWT + score gate | 5/hr/user |
+| GET | `/api/jobs/tailored/:tailoredResumeId` | JWT | No |
+| POST | `/api/jobs/:jobId/apply` | JWT | No |
+| PATCH | `/api/jobs/applications/:applicationId` | JWT | No |
+| GET | `/api/jobs/applications` | JWT | No |
+
+### Database Migrations
+
+| Migration | Description |
+|-----------|-------------|
+| 019 | `jobs` table with `job_source`, `company_type` enums and pgvector `jd_embedding` |
+| 020 | `job_skills` join table with `skill_importance` enum |
+| 021 | `job_applications` table with `application_status` enum + unique on `(user_id, job_id)` |
+| 022 | `tailored_resumes` table |
+| 023 | `profile_embedding` column on `resumes` + pgvector ivfflat index |
 
 ### Files Created
 
 ```
 src/
 ├── lib/ai/
-│   ├── interview-question-gen.interface.ts   # InterviewAIService interface
-│   ├── interview-scoring.ts                  # 5-dimension scoring + aggregation
-│   ├── gemini-interview.provider.ts          # Gemini question-gen + eval
-│   └── openai-interview.provider.ts          # OpenAI question-gen + eval
-├── modules/
-│   └── interview/
-│       ├── interview.routes.ts               # 8 endpoints with auth + rate limiting
-│       ├── interview.controller.ts           # HTTP request handlers
-│       ├── interview.service.ts              # Orchestration: start → submit → complete → report
-│       ├── interview.repository.ts           # SQL queries for sessions/questions/answers
-│       ├── interview.validators.ts           # Zod schemas for all interview inputs
-│       └── dimension-score-sync.service.ts   # Writes Interview Readiness → resume dimension_scores
+│   ├── job-extraction.interface.ts           # JobExtractionService interface + TailoredResumeContent
+│   ├── resume-tailoring.ts                   # Prompt builders + Zod schemas for tailoring
+│   ├── gemini-job-extraction.provider.ts     # Gemini skill extraction
+│   └── openai-job-extraction.provider.ts     # OpenAI skill extraction
+├── modules/jobs/
+│   ├── jobs.routes.ts                        # 8 endpoints with auth + rate limiting
+│   ├── jobs.controller.ts                    # HTTP request handlers
+│   ├── jobs.service.ts                       # Orchestration: matches → manual → apply → tailor
+│   ├── jobs.repository.ts                    # Full SQL CRUD for jobs, skills, applications, tailored resumes
+│   ├── jobs.validators.ts                    # Zod schemas for all job inputs
+│   ├── matching.service.ts                   # pgvector cosine similarity + manual match computation
+│   └── ingestion/
+│       ├── indeed.connector.ts               # Indeed Publisher API client
+│       ├── wellfound.connector.ts            # Wellfound API client
+│       └── ingestion.worker.ts               # BullMQ repeatable job worker (cron)
 ├── db/migrations/
-│   ├── 016_create_interview_sessions.sql
-│   ├── 017_create_interview_questions.sql
-│   └── 018_create_interview_answers.sql
+│   ├── 019_create_jobs.sql
+│   ├── 020_create_job_skills.sql
+│   ├── 021_create_job_applications.sql
+│   ├── 022_create_tailored_resumes.sql
+│   └── 023_alter_resumes_add_profile_embedding.sql
+```
+
+### Modified Files
+
+| File | Change |
+|------|--------|
+| `src/config/env.ts` | Added M6 env vars (INDEED_PUBLISHER_ID, WELLFOUND_API_KEY, MATCHES_CACHE_TTL_SECONDS, JOBS_INGESTION_CRON) |
+| `src/lib/ai/index.ts` | Added `createJobExtractionService()` factory |
+| `src/app.ts` | Registered `/api/jobs` routes |
+| `src/jobs/queue.ts` | Added `jobIngestionQueue` + `createJobIngestionWorker` |
+| `src/worker.ts` | Integrated ingestion worker with cron scheduler |
+| `src/modules/resume/resume.repository.ts` | Added `profile_embedding` to `ResumeRow` interface |
+
+### Matching Score Calculation
+
+Jobs are matched using pgvector cosine distance (`<=>` operator) between `resumes.profile_embedding` and `jobs.jd_embedding`. The raw distance (-1 to 1) is normalized to 0-100:
+
+```typescript
+function normalizeCosineSimilarity(raw: number): number {
+  const clamped = Math.max(-1, Math.min(1, raw));
+  return Math.round(((clamped + 1) / 2) * 100);
+}
+```
+
+For manual paste jobs, match percent = `(matchedSkills / totalExtractedSkills) × 100` (case-insensitive).
+
+### Score Gates
+
+All matching and tailoring endpoints enforce:
+1. **Active resume exists** → 403 `NO_ACTIVE_RESUME`
+2. **ATS score ≥ 70** → 403 `SCORE_TOO_LOW`  
+3. **Profile embedding exists** → 400 `NO_PROFILE_EMBEDDING`
+
+### Ingestion Architecture
+
+```
+Cron Trigger (JOBS_INGESTION_CRON, default: daily 2 AM)
+       │
+       ▼
+  BullMQ Repeatable Job
+       │
+       ├── Indeed Connector → Search → Fetch details → Upsert jobs
+       │                              ↓
+       ├── Wellfound Connector → Search → Fetch details → Upsert jobs
+       │                              ↓
+       └── Deactivate stale jobs (scraped_at < previous run)
+```
+
+---
+
+## Milestone 7: Billing & Subscription (Razorpay)
+
+**Scope:** One-time checkout via Razorpay Orders API, webhook-driven subscription tier upgrades (student/pro), domain-based student verification heuristic, BullMQ cron-based subscription expiry downgrades, and payment history tracking.
+
+### Implemented Features
+
+| Feature | Status |
+|---------|--------|
+| Razorpay checkout order creation (4 plans: student monthly/annual, pro monthly/annual) | ✅ |
+| Razorpay webhook handler with HMAC-SHA256 signature verification | ✅ |
+| `payment.captured` → subscription tier upgrade + `subscription_expires_at` set | ✅ |
+| `payment.failed` → payment status marked `failed` | ✅ |
+| Idempotent webhook processing (`subscription_webhook_events` ledger, UNIQUE `razorpay_event_id`) | ✅ |
+| Subscription status endpoint (tier, expiry, student verification) | ✅ |
+| Payment history endpoint (most recent first, paginated) | ✅ |
+| Domain-based student verification submission (`.ac.in`, `.edu.in`, `.edu`) | ✅ |
+| BullMQ repeatable daily job for subscription expiry downgrades (`BILLING_EXPIRY_CRON`) | ✅ |
+| Raw-body middleware for webhook route before global JSON parser | ✅ |
+| Subscription fields on users table (`subscription_expires_at`, `student_verification_status`) | ✅ |
+| `plan_type` enum (`student_monthly`, `student_annual`, `pro_monthly`, `pro_annual`) | ✅ |
+| `payment_status` enum (`created`, `paid`, `failed`) | ✅ |
+| Rate limiting on checkout (10/hour/user) | ✅ |
+
+### Routes
+
+| Method | Endpoint | Auth | Rate Limited |
+|--------|----------|------|-------------|
+| POST | `/api/billing/webhook` | Public (Razorpay sig) | No |
+| POST | `/api/billing/checkout` | JWT | 10/hr/user |
+| GET | `/api/billing/status` | JWT | No |
+| GET | `/api/billing/history` | JWT | No |
+| POST | `/api/billing/student-verify` | JWT | No |
+
+### Plan Pricing
+
+| Plan Key | Tier | Duration | Amount (INR) |
+|----------|------|----------|--------------|
+| `student_monthly` | student | 1 month | ₹99 |
+| `student_annual` | student | 12 months | ₹999 |
+| `pro_monthly` | pro | 1 month | ₹199 |
+| `pro_annual` | pro | 12 months | ₹1,999 |
+
+### Database Migrations
+
+| Migration | Description |
+|-----------|-------------|
+| 024 | `payments` table with `plan_type`, `payment_status` enums + `updated_at` trigger |
+| 025 | `subscription_webhook_events` table with UNIQUE `razorpay_event_id` |
+| 026 | `subscription_expires_at` + `student_verification_status` columns on `users` |
+
+### Files Created
+
+```
+src/
+├── lib/payments/
+│   ├── razorpay.client.ts                    # Thin Razorpay Orders API wrapper (createOrder, fetchPayment)
+│   └── webhook-signature.ts                  # HMAC-SHA256 raw-body verification
+├── modules/billing/
+│   ├── billing.routes.ts                     # 5 endpoints (1 public webhook, 4 JWT-protected)
+│   ├── billing.controller.ts                 # HTTP request handlers + raw-body webhook parsing
+│   ├── billing.service.ts                    # Orchestration: checkout, webhook, status, history, student-verify
+│   ├── billing.repository.ts                 # SQL CRUD: payments, webhook events, user subscriptions, expiry sweep
+│   ├── billing.validators.ts                 # Zod schemas for checkout, student-verify, history query
+│   └── expiry.worker.ts                      # BullMQ repeatable job for daily expiry downgrades
+├── db/migrations/
+│   ├── 024_create_payments.sql
+│   ├── 025_create_subscription_webhook_events.sql
+│   └── 026_alter_users_add_subscription_fields.sql
+```
+
+### Modified Files
+
+| File | Change |
+|------|--------|
+| `src/config/env.ts` | Added M7 env vars (RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET, RAZORPAY_WEBHOOK_SECRET, BILLING_EXPIRY_CRON) |
+| `src/app.ts` | Added raw-body middleware for webhook route BEFORE global JSON parser; registered `/api/billing` routes |
+| `src/jobs/queue.ts` | Added `billingExpiryQueue` + `createBillingExpiryWorker` |
+| `src/worker.ts` | Integrated billing expiry worker with cron scheduler |
+| `package.json` | Added `razorpay` dependency |
+| `vitest.config.ts` | Added `globalSetup` for migration runner + `RAZORPAY_WEBHOOK_SECRET` env var |
+
+### Webhook Architecture
+
+```
+Razorpay
+  │  POST /api/billing/webhook
+  │  x-razorpay-signature: <hmac-sha256>
+  │  Body: raw JSON
+  ▼
+app.ts: express.raw({ type: "application/json" }) BEFORE global express.json()
+  │
+  ▼
+billing.controller.ts
+  │  Parse raw buffer → JSON
+  │  Verify HMAC-SHA256 signature
+  ▼
+billing.service.ts
+  │  Check idempotency (razorpay_event_id UNIQUE)
+  │  Insert ledger event
+  │
+  ├── payment.captured → mark payment paid
+  │                      update subscription_tier
+  │                      set subscription_expires_at
+  │
+  └── payment.failed → mark payment failed
+                       (no subscription change)
+```
+
+### Subscription Expiry Flow
+
+```
+Daily Cron (BILLING_EXPIRY_CRON, default: 3 AM)
+       │
+       ▼
+  BullMQ Repeatable Job
+       │
+       ▼
+  expiry.worker.ts
+       │
+       ▼
+  SELECT users WHERE subscription_tier != 'free'
+                  AND subscription_expires_at < NOW()
+       │
+       ├── For each: UPDATE users SET subscription_tier = 'free'
+       └── Log count
+
+Note: Free tier features remain accessible after expiry.
+Pro-only features (e.g., mock interviews) return 403 UPGRADE_REQUIRED.
+```
+
+### Student Verification
+
+Domain-based heuristic — not a hard enrollment gate:
+
+| Domain Suffix | Match |
+|---------------|-------|
+| `.ac.in` | Indian academic institutions |
+| `.edu.in` | Indian educational institutions |
+| `.edu` | International educational institutions |
+
+On submission, status is set to `pending`. Actual verification (→ `verified`) is handled externally. Until verified, the user remains on their current subscription tier.
+
+---
+
+## Milestone 8: B2B College Portal
+
+**Scope:** Institution accounts, an `institution_admin` role (already in `user_role` enum from M1), student↔institution auto-linking via email domain matching, batch (cohort) definitions, consent-gated aggregate analytics for college cohorts, and a student-facing consent toggle.
+
+**Builds on M1–M7:** Reuses the `authenticate` middleware, `query`/`queryOne` helpers, `rateLimiter` factory, `errorHandler`, `logger`, and migration runner. Reads aggregate data from M1 (onboarding), M2 (resumes/ATS scores), M3 (roadmap progress), M5 (interview scores), and M6 (job application funnel) — all read-aggregation, no new scoring logic.
+
+### Implemented Features
+
+| Feature | Status |
+|---------|--------|
+| `institutions` table (name, domain, contact_email) | ✅ |
+| `institution_batches` table (institution, degree, graduation_year, label) | ✅ |
+| `institution_id`, `batch_id`, `institution_data_sharing_consent` columns on `users` | ✅ |
+| Email domain auto-matching at registration (`institutions.domain` lookup) | ✅ |
+| Batch auto-linking at onboarding completion (degree + graduation_year match) | ✅ |
+| Batch creation with retroactive backfill of matching unlinked students | ✅ |
+| Institution admin batch listing (own institution only) | ✅ |
+| Aggregate batch analytics (headcount, onboarding, resume, roadmap, interviews, jobs) | ✅ |
+| Analytics computed only over consenting students (`consent = true` gate) | ✅ |
+| `headcount.totalLinked` includes non-consenting students as count-only (no data leak) | ✅ |
+| Named student roster (consenting students only) | ✅ |
+| Cross-institution isolation (403 on batch ID guessing) | ✅ |
+| Student-facing consent toggle (PATCH `/consent`, reversible) | ✅ |
+| Student-facing "my institution" read-only view | ✅ |
+| Zod validation on all college inputs | ✅ |
+| Google OAuth registration also triggers domain auto-matching | ✅ |
+
+### Routes
+
+| Method | Endpoint | Auth | Role |
+|--------|----------|------|------|
+| POST | `/api/college/batches` | JWT | institution_admin (effective via ownership) |
+| GET | `/api/college/batches` | JWT | Any (scoped to own institution) |
+| GET | `/api/college/batch/:id` | JWT | institution_admin + ownership check |
+| GET | `/api/college/batch/:id/students` | JWT | institution_admin + ownership check |
+| PATCH | `/api/college/consent` | JWT | Any (self-service) |
+| GET | `/api/college/my-institution` | JWT | Any |
+
+### Database Migrations
+
+| Migration | Description |
+|-----------|-------------|
+| 027 | `institutions` table with UNIQUE `domain` |
+| 028 | `institution_batches` table with index on `(institution_id, degree, graduation_year)` |
+| 029 | `institution_id`, `batch_id`, `institution_data_sharing_consent` columns on `users` |
+
+### Files Created
+
+```
+src/
+├── modules/college/
+│   ├── college.routes.ts                    # 6 endpoints (admin batch mgmt + student consent/my-institution)
+│   ├── college.controller.ts                # HTTP request handlers
+│   ├── college.service.ts                   # Batch CRUD + analytics aggregation orchestration
+│   ├── college.repository.ts                # SQL for institutions, batches, analytics queries across 6 tables
+│   ├── college.validators.ts                # Zod schemas (create batch, consent toggle, students query)
+│   └── institution-matching.service.ts      # Domain-match at registration, batch auto-link at onboarding
+├── db/migrations/
+│   ├── 027_create_institutions.sql
+│   ├── 028_create_institution_batches.sql
+│   └── 029_alter_users_add_institution_fields.sql
+```
+
+### Modified Files
+
+| File | Change |
+|------|--------|
+| `src/app.ts` | Registered `/api/college` routes |
+| `src/modules/auth/auth.service.ts` | Added `InstitutionMatchingService.linkUserToInstitution()` call after registration |
+| `src/modules/auth/google-oauth.service.ts` | Added `InstitutionMatchingService.linkUserToInstitution()` call after Google user creation |
+| `src/modules/auth/auth.repository.ts` | Added `institution_id`, `batch_id`, `institution_data_sharing_consent` to `UserRow` and `getPublicUserProfile` |
+| `src/modules/onboarding/onboarding.service.ts` | Added `InstitutionMatchingService.autoLinkBatch()` call after onboarding completion |
+
+### Institution Linking Flow
+
+```
+REGISTRATION (email/password or Google OAuth)
+┌──────────┐  POST /register   ┌──────────────┐
+│ Frontend │ ────────────────► │  Auth Service │
+│          │                   │              │
+│          │                   │ Create user   │
+│          │                   │              │
+│          │                   │  Extract email domain → institutions.domain lookup
+│          │                   │  ↓ Match? Set users.institution_id
+│          │                   │              │
+│          │                   │  Continue with verification email...
+└──────────┘                   └──────────────┘
+
+ONBOARDING COMPLETION
+┌──────────┐  POST /complete  ┌──────────────────┐
+│ Frontend │ ────────────────► │ Onboarding Service│
+│          │                   │                   │
+│          │                   │  Mark onboarding  │
+│          │                   │  completed = true  │
+│          │                   │                   │
+│          │                   │  Look up institution_batches
+│          │                   │  WHERE (institution_id, degree, graduation_year)
+│          │                   │  ↓ Match? Set users.batch_id
+└──────────┘                   └──────────────────┘
+
+BATCH CREATION (institution_admin)
+┌──────────┐  POST /batches   ┌──────────────┐
+│  Admin UI │ ──────────────► │ College Service│
+│           │                  │                │
+│           │                  │  INSERT batch   │
+│           │                  │                │
+│           │                  │  Backfill: UPDATE users
+│           │                  │  SET batch_id = :newId
+│           │                  │  WHERE institution_id = :inst
+│           │                  │    AND degree = :deg
+│           │                  │    AND graduation_year = :yr
+│           │                  │    AND batch_id IS NULL
+└───────────┘                  └────────────────┘
+```
+
+### Analytics Aggregation
+
+For a given batch, `GET /api/college/batch/:id` runs (all scoped to `batch_id = :id AND institution_data_sharing_consent = true`):
+
+| Metric | Source | Computation |
+|--------|--------|-------------|
+| Headcount | `users` | `COUNT(*)` linked vs. `COUNT(*) FILTER (WHERE consent)` |
+| Onboarding completion | `users` | % with `onboarding_completed = true` |
+| Resume upload rate | `resumes` | % with at least one active resume |
+| Avg ATS score | `resumes` | Average `ats_score` across active resumes |
+| Avg dimension scores | `resumes` | Per-dimension average of `dimension_scores` JSONB |
+| Roadmap completion | `roadmap_items` | Average % of items marked complete |
+| Interviews completed | `interview_sessions` | Count of completed sessions |
+| Avg interview score | `interview_sessions` | Average `total_score` |
+| Job application funnel | `job_applications` | Count by status (`applied`, `interview`, `offer`, `rejected`) |
+
+### Consent Architecture
+
+```
+Data sharing consent gate (institution_data_sharing_consent):
+  - DEFAULT false (opt-in)
+  - Toggled by student via PATCH /api/college/consent
+  - Affects ALL institution-facing views (analytics + roster)
+  - headcount.totalLinked is the only field reflecting non-consenting students (as a bare count)
+  - Revoking consent immediately excludes student from future queries
+```
+
+### Security Model
+
+- Role check (`institution_admin`) and ownership check (`batch.institution_id = admin.institution_id`) on every batch/analytics endpoint
+- Cross-institution batch ID guessing returns 403, not 404 (prevents existence probing)
+- Consent gate applies uniformly to both aggregate analytics and named roster
+- `institution_admin` accounts have no access to student-facing endpoints from M1–M7
+- The `user_role` enum (`student`, `institution_admin`) was already defined in migration 001 — no new role migration needed
 ```

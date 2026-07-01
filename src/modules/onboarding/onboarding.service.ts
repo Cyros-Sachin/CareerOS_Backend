@@ -1,7 +1,9 @@
 import { HttpError } from "../../middleware/errorHandler";
+import { InstitutionMatchingService } from "../college/institution-matching.service";
 import * as repo from "./onboarding.repository";
 
 export class OnboardingService {
+  private institutionMatching = new InstitutionMatchingService();
   async getStatus(userId: string) {
     const status = await repo.getOnboardingStatus(userId);
     if (!status) {
@@ -40,5 +42,6 @@ export class OnboardingService {
       throw new HttpError(400, "ONBOARDING_INCOMPLETE", "Complete all onboarding steps first");
     }
     await repo.completeOnboarding(userId);
+    await this.institutionMatching.autoLinkBatch(userId);
   }
 }

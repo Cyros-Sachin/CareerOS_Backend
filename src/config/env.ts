@@ -51,6 +51,19 @@ const envSchema = z.object({
 
   // Milestone 4 — AI Mentor
   GITHUB_TOKEN: z.string().optional(),
+
+  // Milestone 6 — Job Matching
+  INDEED_PUBLISHER_ID: z.string().optional(),
+  INDEED_API_KEY: z.string().optional(),
+  WELLFOUND_API_KEY: z.string().optional(),
+  MATCHES_CACHE_TTL_SECONDS: z.coerce.number().default(3600),
+  JOBS_INGESTION_CRON: z.string().default("0 2 * * *"),
+
+  // Milestone 7 — Billing & Subscription
+  RAZORPAY_KEY_ID: z.string().default("rzp_test_xxxxxxxxxxxx"),
+  RAZORPAY_KEY_SECRET: z.string().default(""),
+  RAZORPAY_WEBHOOK_SECRET: z.string().default(""),
+  BILLING_EXPIRY_CRON: z.string().default("0 3 * * *"),
 })
 
   .superRefine((data, ctx) => {

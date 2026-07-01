@@ -1907,3 +1907,925 @@ async function sendMentorMessage(message: string): Promise<void> {
 - **Cached responses:** Messages with `isCachedResponse: true` can show a "(cached)" badge in the UI
 - **GitHub audit:** Use the non-streaming `POST /api/mentor/github-audit` endpoint with a dedicated button
 ```
+
+---
+
+## 21. Jobs & Matching Endpoints
+
+All jobs endpoints require `Authorization: Bearer <accessToken>`.
+
+### GET `/api/jobs/matches`
+
+Get job matches based on your active resume's profile embedding (pgvector cosine similarity).
+
+**Query params:**
+| Param | Type | Description |
+|-------|------|-------------|
+| `location` | string | Filter by location (optional, LIKE match) |
+| `companyType` | enum | `startup`, `mid_size`, `enterprise`, `other` (optional) |
+| `limit` | number | Max results (1-50, default 20) |
+
+**Success (200):**
+```json
+[
+  {
+    "id": "uuid",
+    "source": "indeed",
+    "external_id": "abc123",
+    "title": "Senior Software Engineer",
+    "company": "Google",
+    "company_type": "enterprise",
+    "location": "Bangalore, India",
+    "description": "We are looking for...",
+    "apply_url": "https://indeed.com/viewjob?jk=abc123",
+    "posted_at": "2026-07-01T00:00:00.000Z",
+    "matchPercent": 85,
+    "missingSkills": [
+      { "skillName": "Kubernetes", "importance": "preferred" }
+    ],
+    "userSkills": ["JavaScript", "React", "Node.js"]
+  }
+]
+```
+
+**Errors:**
+| Status | Code | Meaning |
+|--------|------|---------|
+| 403 | `NO_ACTIVE_RESUME` | No active resume found |
+| 403 | `SCORE_TOO_LOW` | Resume ATS score below 70 |
+| 400 | `NO_PROFILE_EMBEDDING` | Profile embedding not computed — re-activate resume |
+
+---
+
+### POST `/api/jobs/manual`
+
+Paste a job description to get instant match scoring without storing the job. Useful for quick "should I apply?" checks.
+
+**Rate limited:** 10/hour/user
+
+**Request:**
+```json
+{
+  "jobUrl": "https://example.com/job/123",
+  "jobText": "We are looking for a Senior Software Engineer with expertise in JavaScript, React, Node.js..."
+}
+```
+
+`jobUrl` is optional. `jobText` must be 50-20000 characters.
+
+**Success (200):**
+```json
+{
+  "jobText": "We are looking for a Senior Software Engineer...",
+  "jobUrl": null,
+  "extractedSkills": [
+    { "skillName": "JavaScript", "importance": "required" },
+    { "skillName": "React", "importance": "required" }
+  ],
+  "matchPercent": 67,
+  "matchedSkills": ["JavaScript", "React"],
+  "missingSkills": [
+    { "skillName": "Kubernetes", "importance": "preferred" }
+  ]
+}
+```
+
+---
+
+### GET `/api/jobs/:jobId`
+
+Get full job detail including required skills and missing skills for the current user.
+
+**Success (200):**
+```json
+{
+  "id": "uuid",
+  "source": "indeed",
+  "title": "Senior Software Engineer",
+  "company": "Google",
+  "description": "...",
+  "apply_url": "https://...",
+  "location": "Bangalore, India",
+  "posted_at": "2026-07-01T00:00:00.000Z",
+  "jobSkills": [
+    { "skillId": "uuid", "skillName": "React", "importance": "required" }
+  ],
+  "missingSkills": [
+    { "skillId": "uuid", "skillName": "Kubernetes", "importance": "preferred" }
+  ]
+}
+```
+
+---
+
+### POST `/api/jobs/:jobId/apply`
+
+Apply to a job. Uses upsert — re-applying updates the existing application.
+
+**Request:**
+```json
+{
+  "notes": "Excited about this role!"
+}
+```
+
+`notes` is optional (max 2000 chars).
+
+**Success (201):**
+```json
+{
+  "id": "uuid",
+  "jobId": "uuid",
+  "status": "applied",
+  "appliedAt": "2026-07-01T00:00:00.000Z"
+}
+```
+
+---
+
+### PATCH `/api/jobs/applications/:applicationId`
+
+Update application status.
+
+**Request:**
+```json
+{
+  "status": "interview",
+  "notes": "Phone screen scheduled for July 10"
+}
+```
+
+Valid statuses: `applied`, `interview`, `offer`, `rejected`
+
+**Success (200):**
+```json
+{
+  "id": "uuid",
+  "user_id": "uuid",
+  "job_id": "uuid",
+  "status": "interview",
+  "notes": "Phone screen scheduled for July 10",
+  "applied_at": "2026-07-01T00:00:00.000Z",
+  "updated_at": "2026-07-02T00:00:00.000Z"
+}
+```
+
+**Errors:**
+| Status | Code | Meaning |
+|--------|------|---------|
+| 404 | `APPLICATION_NOT_FOUND` | Application ID not found |
+| 403 | `FORBIDDEN` | You don't own this application |
+
+---
+
+### GET `/api/jobs/applications`
+
+List user's job applications with optional status filter.
+
+**Query params:**
+| Param | Type | Description |
+|-------|------|-------------|
+| `status` | enum | `applied`, `interview`, `offer`, `rejected` (optional) |
+
+**Success (200):**
+```json
+[
+  {
+    "id": "uuid",
+    "user_id": "uuid",
+    "job_id": "uuid",
+    "status": "interview",
+    "notes": null,
+    "applied_at": "2026-07-01T00:00:00.000Z",
+    "updated_at": "2026-07-02T00:00:00.000Z",
+    "title": "Senior Software Engineer",
+    "company": "Google",
+    "location": "Bangalore, India",
+    "apply_url": "https://..."
+  }
+]
+```
+
+---
+
+### POST `/api/jobs/:jobId/tailor-resume`
+
+Generate a tailored resume for a specific job. Uses AI to rewrite your resume content to match the job description and required skills.
+
+**Rate limited:** 5/hour/user
+
+**No request body needed.**
+
+**Success (201):**
+```json
+{
+  "id": "uuid",
+  "jobId": "uuid",
+  "sourceResumeId": "uuid",
+  "tailoredContent": {
+    "skills": ["JavaScript", "React", "Node.js"],
+    "projects": [...],
+    "education": [...],
+    "experience": [...],
+    "certifications": []
+  },
+  "createdAt": "2026-07-01T00:00:00.000Z"
+}
+```
+
+---
+
+### GET `/api/jobs/tailored/:tailoredResumeId`
+
+Retrieve a previously generated tailored resume.
+
+**Success (200):** Same shape as POST response.
+
+**Errors:**
+| Status | Code | Meaning |
+|--------|------|---------|
+| 404 | `TAILORED_RESUME_NOT_FOUND` | Tailored resume ID not found |
+| 403 | `FORBIDDEN` | You don't own this tailored resume |
+
+---
+
+## 22. Error Codes Reference (Additions)
+
+| Code | Status | Meaning |
+|------|--------|---------|
+| `NO_ACTIVE_RESUME` | 403 | No active resume found for the user |
+| `SCORE_TOO_LOW` | 403 | Resume ATS score below 70 threshold |
+| `NO_PROFILE_EMBEDDING` | 400 | Profile embedding not computed yet |
+| `JOB_NOT_FOUND` | 404 | Job ID not found |
+| `APPLICATION_NOT_FOUND` | 404 | Application ID not found |
+| `TAILORED_RESUME_NOT_FOUND` | 404 | Tailored resume ID not found |
+| `FORBIDDEN` | 403 | Cross-user resource access attempt |
+
+---
+
+## 23. Rate Limiting (Updated)
+
+| Endpoint | Limit | Window | Keyed By |
+|----------|-------|--------|----------|
+| `POST /api/roadmap/generate` | 5 | 1 hour | User ID |
+| `POST /api/roadmap/:roadmapId/regenerate` | 5 | 1 hour | User ID |
+| `POST /api/mentor/github-audit` | 10 | 1 hour | IP |
+| `POST /api/interview/start` | 5 | 1 hour | User ID |
+| `POST /api/jobs/manual` | 10 | 1 hour | User ID |
+| `POST /api/jobs/:jobId/tailor-resume` | 5 | 1 hour | User ID |
+| `POST /api/billing/checkout` | 10 | 1 hour | User ID |
+
+---
+
+## 24. Frontend Integration — Jobs Flow
+
+```
+Client                        API                         AI Provider
+  │  GET /jobs/matches         │                            │
+  │──────────────────────────► │                            │
+  │                            │  Check active resume       │
+  │                            │  Check ats_score >= 70     │
+  │                            │  Check profile_embedding   │
+  │                            │                            │
+  │                            │  pgvector cosine sim       │
+  │                            │  (no AI call for matching) │
+  │◄───────────────────────────│  [{ matchPercent, ... }]   │
+  │                            │                            │
+  │  POST /jobs/manual         │                            │
+  │───────────────────────────►│                            │
+  │                            │  Extract skills via AI     │
+  │                            │──────────────────────────►│
+  │                            │◄──────────────────────────│
+  │                            │  Compute skill overlap     │
+  │◄───────────────────────────│  { matchPercent, skills }  │
+  │                            │                            │
+  │  POST /jobs/:id/tailor     │                            │
+  │───────────────────────────►│                            │
+  │                            │  Build tailoring prompt    │
+  │                            │──────────────────────────►│
+  │                            │◄──────────────────────────│
+  │                            │  Persist tailored resume   │
+  │◄───────────────────────────│  201 { tailoredContent }   │
+```
+
+### Jobs UI Integration
+
+```typescript
+// 1. Get job matches
+const matches = await apiClient("/api/jobs/matches?limit=20");
+matches.forEach((job) => {
+  job.matchPercent;       // 0-100 score
+  job.missingSkills;      // Skills to highlight
+});
+
+// 2. Quick manual check
+const manual = await apiClient("/api/jobs/manual", {
+  method: "POST",
+  body: JSON.stringify({ jobText: "Pasted JD here..." }),
+});
+manual.matchPercent;      // Instant compatibility score
+
+// 3. View job detail
+const job = await apiClient(`/api/jobs/${jobId}`);
+job.missingSkills;        // What you'd need to learn
+
+// 4. Apply to a job
+await apiClient(`/api/jobs/${jobId}/apply`, {
+  method: "POST",
+  body: JSON.stringify({ notes: "Excited!" }),
+});
+
+// 5. Track application status
+await apiClient(`/api/jobs/applications/${appId}`, {
+  method: "PATCH",
+  body: JSON.stringify({ status: "interview" }),
+});
+
+// 6. List applications
+const apps = await apiClient("/api/jobs/applications?status=interview");
+
+// 7. Tailor resume for a job
+const tailored = await apiClient(`/api/jobs/${jobId}/tailor-resume`, {
+  method: "POST",
+});
+// tailored.tailoredContent — use to populate a resume editor or download
+```
+
+---
+
+## 25. Billing & Subscription Endpoints
+
+The webhook endpoint (`POST /api/billing/webhook`) is public — called by Razorpay directly. All other billing endpoints require `Authorization: Bearer <accessToken>`.
+
+### POST `/api/billing/webhook`
+
+Razorpay webhook handler. **NOT behind JWT auth** — called by Razorpay. Uses raw-body middleware (before global JSON parser) for HMAC-SHA256 signature verification.
+
+**Headers:** `x-razorpay-signature: <hmac-sha256-hex>`
+
+**Request:** Raw JSON body as sent by Razorpay.
+
+**Success (200):**
+```json
+{ "status": "ok" }
+```
+
+| Status | Code | Meaning |
+|--------|------|---------|
+| 400 | `INVALID_SIGNATURE` | HMAC verification failed |
+| 400 | `INVALID_PAYLOAD` | Could not parse JSON body |
+| 400 | `INVALID_EVENT` | Missing event ID or type |
+
+**Idempotency:** Duplicate `razorpay_event_id`s are silently ignored via `subscription_webhook_events` ledger table.
+
+**Handled events:** `payment.captured` (upgrades subscription tier, sets `subscription_expires_at`), `payment.failed` (marks payment as failed)
+
+---
+
+### POST `/api/billing/checkout`
+
+Create a Razorpay checkout order. Returns the order ID and key needed to open the Razorpay checkout modal on the frontend.
+
+**Rate limited:** 10/hour/user
+
+**Request:**
+```json
+{
+  "plan": "pro_monthly"
+}
+```
+
+**Valid plans:**
+
+| Plan Key | Tier | Duration | Amount (INR) |
+|----------|------|----------|--------------|
+| `student_monthly` | student | 1 month | ₹99 |
+| `student_annual` | student | 12 months | ₹999 |
+| `pro_monthly` | pro | 1 month | ₹199 |
+| `pro_annual` | pro | 12 months | ₹1,999 |
+
+**Success (200):**
+```json
+{
+  "orderId": "order_xxxxxxxxxx",
+  "amountPaise": 19900,
+  "currency": "INR",
+  "razorpayKeyId": "rzp_test_xxxxxxxxxxxx",
+  "paymentId": "uuid"
+}
+```
+
+**Errors:**
+| Status | Code | Meaning |
+|--------|------|---------|
+| 400 | `INVALID_PLAN` | Unrecognized plan key |
+| 429 | `RATE_LIMITED` | Too many checkout requests |
+
+---
+
+### GET `/api/billing/status`
+
+Get current subscription and student verification status.
+
+**Success (200):**
+```json
+{
+  "subscription_tier": "pro",
+  "subscription_expires_at": "2027-01-01T00:00:00.000Z",
+  "student_verification_status": "unverified"
+}
+```
+
+`subscription_tier` values: `free`, `student`, `pro`
+`student_verification_status` values: `unverified`, `pending`, `verified`
+
+---
+
+### GET `/api/billing/history?limit=20`
+
+Payment history, most recent first.
+
+**Query params:**
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `limit` | number | 20 | Max results (1-100) |
+
+**Success (200):**
+```json
+[
+  {
+    "id": "uuid",
+    "razorpay_order_id": "order_xxxxxxxxxx",
+    "razorpay_payment_id": "pay_xxxxxxxxxx",
+    "plan": "pro_monthly",
+    "amount_paise": 19900,
+    "currency": "INR",
+    "status": "paid",
+    "created_at": "2026-07-01T00:00:00.000Z"
+  }
+]
+```
+
+`status` values: `created`, `paid`, `failed`
+
+---
+
+### POST `/api/billing/student-verify`
+
+Submit a college email for student status verification (domain-based heuristic). Status is set to `pending` — actual verification (`verified`) is handled externally.
+
+**Request:**
+```json
+{
+  "collegeEmail": "student@college.edu"
+}
+```
+
+Must be a valid email with a recognized educational domain (`.ac.in`, `.edu.in`, `.edu`).
+
+**Success (200):**
+```json
+{
+  "student_verification_status": "pending"
+}
+```
+
+**Errors:**
+| Status | Code | Meaning |
+|--------|------|---------|
+| 400 | `NOT_COLLEGE_EMAIL` | Email domain not recognized as educational |
+| 400 | `VALIDATION_ERROR` | Invalid email format |
+
+---
+
+## 26. Error Codes Reference (Additions)
+
+| Code | Status | Meaning |
+|------|--------|---------|
+| `INVALID_PLAN` | 400 | Invalid billing plan key |
+| `NOT_COLLEGE_EMAIL` | 400 | Email domain not recognized as educational |
+| `INVALID_SIGNATURE` | 400 | Razorpay webhook HMAC verification failed |
+| `INVALID_PAYLOAD` | 400 | Webhook body could not be parsed as JSON |
+| `INVALID_EVENT` | 400 | Webhook event missing required fields |
+| `UPGRADE_REQUIRED` | 403 | Feature requires Pro subscription tier |
+
+---
+
+## 27. Frontend Integration — Billing Flow
+
+```
+Client (Browser)              API                         Razorpay
+  │  POST /billing/checkout   │                            │
+  │──────────────────────────►│                            │
+  │◄──────────────────────────│  { orderId, amount,        │
+  │                           │    razorpayKeyId, ... }    │
+  │                           │                            │
+  │  Open Razorpay Checkout   │                            │
+  │  (Razorpay.js modal)      │                            │
+  │──────────────────────────────────────────────────────►│
+  │  User completes payment   │                            │
+  │◄──────────────────────────────────────────────────────┤
+  │                           │                            │
+  │  Razorpay sends webhook   │                            │
+  │  POST /billing/webhook    │                            │
+  │◄──────────────────────────│────────────────────────────│
+  │  (no client action needed)│                            │
+  │                           │                            │
+  │  Refresh status to verify │                            │
+  │  GET /billing/status      │                            │
+  │──────────────────────────►│                            │
+  │◄──────────────────────────│  { subscription_tier: pro }│
+```
+
+### Razorpay Checkout Integration
+
+```typescript
+// 1. Create checkout order
+const { orderId, amountPaise, currency, razorpayKeyId } = await apiClient(
+  "/api/billing/checkout",
+  { method: "POST", body: JSON.stringify({ plan: "pro_monthly" }) }
+);
+
+// 2. Open Razorpay checkout modal
+const options = {
+  key: razorpayKeyId,
+  amount: amountPaise,
+  currency,
+  name: "CareerOS",
+  description: "Pro Monthly Subscription",
+  order_id: orderId,
+  prefill: { email: userEmail },
+  modal: {
+    ondismiss: () => {
+      // User closed the modal without paying
+    },
+  },
+  handler: async (response: any) => {
+    // Payment completed on Razorpay's side
+    // Webhook handles subscription upgrade asynchronously
+    const status = await apiClient("/api/billing/status");
+    if (status.subscription_tier !== "free") {
+      showSuccess("Subscription activated!");
+    }
+  },
+};
+
+const razorpay = new (window as any).Razorpay(options);
+razorpay.open();
+```
+
+### Frontend Subscription Checks
+
+```typescript
+// On dashboard load, check subscription status
+const status = await apiClient("/api/billing/status");
+
+// Show upgrade CTA for free users
+if (status.subscription_tier === "free") {
+  showUpgradeCTA();
+}
+
+// Show pending verification badge
+if (status.student_verification_status === "pending") {
+  showBadge("Student verification in progress");
+}
+
+// Check if subscription has expired
+const expiresAt = status.subscription_expires_at
+  ? new Date(status.subscription_expires_at)
+  : null;
+if (
+  status.subscription_tier !== "free" &&
+  expiresAt &&
+  expiresAt < new Date()
+) {
+  showRenewalPrompt();
+}
+```
+
+### Pro Tier Gating
+
+```typescript
+import { apiClient } from "./api-client";
+
+try {
+  await apiClient("/api/interview/start", {
+    method: "POST",
+    body: JSON.stringify({ mode: "technical", difficulty: "medium" }),
+  });
+} catch (err: any) {
+  if (err.code === "UPGRADE_REQUIRED") {
+    // Show upgrade modal with current tier info
+    showUpgradeModal(err.details?.currentTier || "free");
+  }
+}
+```
+
+The `UPGRADE_REQUIRED` error code is returned by any Pro-only feature endpoint (e.g., mock interviews) when the user's `subscription_tier` is not `pro`.
+```
+
+---
+
+## 28. College Portal Endpoints
+
+All college endpoints require `Authorization: Bearer <accessToken>`. Batch-management and analytics endpoints additionally enforce ownership (admin can only access their own institution's batches).
+
+### POST `/api/college/batches`
+
+Create a batch (cohort) under the admin's institution. Automatically backfills `batch_id` for existing unlinked students with matching `(institution_id, degree, graduation_year)`.
+
+**Request:**
+```json
+{
+  "degree": "B.Tech",
+  "graduationYear": 2027,
+  "label": "B.Tech 2024-2027"
+}
+```
+
+`label` is optional.
+
+**Success (201):**
+```json
+{
+  "id": "uuid",
+  "institution_id": "uuid",
+  "degree": "B.Tech",
+  "graduation_year": 2027,
+  "label": "B.Tech 2024-2027",
+  "created_at": "2026-07-01T00:00:00.000Z"
+}
+```
+
+**Errors:**
+| Status | Code | Meaning |
+|--------|------|---------|
+| 400 | `NO_INSTITUTION` | Admin is not linked to any institution |
+| 400 | `VALIDATION_ERROR` | Invalid request body |
+
+---
+
+### GET `/api/college/batches`
+
+List batches belonging to the admin's institution, with student counts.
+
+**Success (200):**
+```json
+[
+  {
+    "id": "uuid",
+    "institution_id": "uuid",
+    "degree": "B.Tech",
+    "graduation_year": 2027,
+    "label": "B.Tech 2024-2027",
+    "created_at": "2026-07-01T00:00:00.000Z",
+    "student_count": 42
+  }
+]
+```
+
+**Errors:**
+| Status | Code | Meaning |
+|--------|------|---------|
+| 400 | `NO_INSTITUTION` | Admin is not linked to any institution |
+
+---
+
+### GET `/api/college/batch/:id`
+
+Aggregate cohort analytics for this batch. All metrics computed only over consenting students (`institution_data_sharing_consent = true`).
+
+**Success (200):**
+```json
+{
+  "batchId": "uuid",
+  "label": "B.Tech 2024-2027",
+  "institutionName": "University A",
+  "degree": "B.Tech",
+  "graduationYear": 2027,
+  "headcount": {
+    "totalLinked": 60,
+    "consenting": 42
+  },
+  "onboarding": { "completionRatePct": 85 },
+  "resume": {
+    "uploadRatePct": 72,
+    "avgAtsScore": 68,
+    "avgDimensionScores": {
+      "quality": 72,
+      "ats": 65,
+      "projects": 58,
+      "experience": 60,
+      "interview": 55,
+      "market": 62
+    }
+  },
+  "roadmap": { "avgCompletionPct": 34 },
+  "interviews": {
+    "sessionsCompleted": 18,
+    "avgTotalScore": 74
+  },
+  "jobs": {
+    "applied": 45,
+    "interview": 12,
+    "offer": 3,
+    "rejected": 8
+  },
+  "topMissingSkills": []
+}
+```
+
+`headcount.totalLinked` includes non-consenting students as a bare count only — no other data reflects them.
+
+**Errors:**
+| Status | Code | Meaning |
+|--------|------|---------|
+| 404 | `BATCH_NOT_FOUND` | Batch ID not found |
+| 403 | `FORBIDDEN` | Batch belongs to another institution |
+
+---
+
+### GET `/api/college/batch/:id/students?limit=50`
+
+Named roster of consenting students in the batch. Non-consenting students are excluded.
+
+**Query params:**
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `limit` | number | 50 | Max results (1-100) |
+
+**Success (200):**
+```json
+[
+  {
+    "id": "uuid",
+    "name": "Priya Sharma",
+    "email": "priya@univa.edu",
+    "onboarding_completed": true,
+    "subscription_tier": "pro"
+  }
+]
+```
+
+**Errors:** Same as batch analytics (404 + 403).
+
+---
+
+### PATCH `/api/college/consent`
+
+Toggle your own data sharing consent. Affects whether your data appears in institution-facing views.
+
+**Request:**
+```json
+{
+  "consent": true
+}
+```
+
+**Success (200):**
+```json
+{
+  "consent": true
+}
+```
+
+**Errors:**
+| Status | Code | Meaning |
+|--------|------|---------|
+| 400 | `VALIDATION_ERROR` | Invalid request body |
+
+---
+
+### GET `/api/college/my-institution`
+
+Read-only view of your institution and batch linkage.
+
+**Success (200):**
+```json
+{
+  "institution_id": "uuid",
+  "batch_id": "uuid",
+  "institution_data_sharing_consent": true,
+  "institution_name": "University A",
+  "batch_label": "B.Tech 2024-2027"
+}
+```
+
+For unlinked users, all institution/batch fields are null:
+```json
+{
+  "institution_id": null,
+  "batch_id": null,
+  "institution_data_sharing_consent": false,
+  "institution_name": null,
+  "batch_label": null
+}
+```
+
+---
+
+## 29. Error Codes Reference (Additions)
+
+| Code | Status | Meaning |
+|------|--------|---------|
+| `NO_INSTITUTION` | 400 | User is not linked to any institution |
+| `BATCH_NOT_FOUND` | 404 | Batch ID does not exist |
+| `FORBIDDEN` | 403 | Cross-institution resource access attempt |
+
+---
+
+## 30. Frontend Integration — College Portal Flow
+
+### Institution Admin Flow
+
+```
+Admin UI                       API
+  │  GET /college/batches       │
+  │───────────────────────────►│
+  │◄───────────────────────────│  [{ degree, label, student_count }]
+  │                            │
+  │  POST /college/batches     │
+  │  { degree: "B.Tech",       │
+  │    graduationYear: 2027 }  │
+  │───────────────────────────►│
+  │◄───────────────────────────│  201 { id, degree, ... }
+  │                            │
+  │  GET /college/batch/:id    │
+  │───────────────────────────►│
+  │◄───────────────────────────│  { headcount, onboarding, resume, ... }
+  │                            │
+  │  GET /college/batch/:id    │
+  │  /students                 │
+  │───────────────────────────►│
+  │◄───────────────────────────│  [{ name, email, subscription_tier }]
+```
+
+### Student Institution View
+
+```
+Student UI                     API
+  │  GET /college/             │
+  │  my-institution            │
+  │───────────────────────────►│
+  │◄───────────────────────────│  { institution_name, batch_label, consent }
+  │                            │
+  │  PATCH /college/consent    │
+  │  { consent: true/false }   │
+  │───────────────────────────►│
+  │◄───────────────────────────│  { consent: true }
+```
+
+### College Portal UI Integration
+
+```typescript
+// Student: check institution linkage
+const myInst = await apiClient("/api/college/my-institution");
+if (myInst.institution_name) {
+  showInstitutionBadge(myInst.institution_name);
+  showConsentToggle(myInst.institution_data_sharing_consent);
+}
+
+// Student: toggle consent
+await apiClient("/api/college/consent", {
+  method: "PATCH",
+  body: JSON.stringify({ consent: true }),
+});
+
+// Admin: list batches
+const batches = await apiClient("/api/college/batches");
+
+// Admin: create batch
+const batch = await apiClient("/api/college/batches", {
+  method: "POST",
+  body: JSON.stringify({
+    degree: "B.Tech",
+    graduationYear: 2027,
+    label: "B.Tech 2024-2027",
+  }),
+});
+
+// Admin: view analytics
+const analytics = await apiClient(`/api/college/batch/${batchId}`);
+analytics.headcount;         // { totalLinked, consenting }
+analytics.onboarding;        // { completionRatePct }
+analytics.resume;            // { uploadRatePct, avgAtsScore, avgDimensionScores }
+analytics.roadmap;           // { avgCompletionPct }
+analytics.interviews;        // { sessionsCompleted, avgTotalScore }
+analytics.jobs;              // { applied, interview, offer, rejected }
+
+// Admin: view student roster
+const students = await apiClient(
+  `/api/college/batch/${batchId}/students?limit=50`
+);
+```
+
+### Institution Auto-Linking
+
+No frontend action needed — the linking happens server-side:
+
+- **At registration:** If the student's email domain matches an `institutions.domain` (e.g., `@univa.edu`), `institution_id` is set automatically
+- **At onboarding completion:** If the student has an `institution_id` and their `degree`/`graduation_year` match a batch, `batch_id` is set automatically
+- **At batch creation:** Existing unlinked students with matching fields are backfilled
+
+The student can verify their linkage via `GET /api/college/my-institution`.
+```

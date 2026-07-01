@@ -5,10 +5,13 @@ import { EmailService } from "../../lib/email/email.service";
 import { verifyEmailTemplate, resetPasswordTemplate } from "../../lib/email/templates/verify-email";
 import { HttpError } from "../../middleware/errorHandler";
 import { logger } from "../../lib/logger";
+import { InstitutionMatchingService } from "../college/institution-matching.service";
 import * as repo from "./auth.repository";
 import crypto from "crypto";
 
 export class AuthService {
+  private institutionMatching = new InstitutionMatchingService();
+
   constructor(private emailService: EmailService) {}
 
   async register(email: string, password: string, name: string): Promise<void> {
@@ -19,6 +22,8 @@ export class AuthService {
 
     const passwordHash = await hashPassword(password);
     const user = await repo.createUser({ email, passwordHash, name });
+
+    await this.institutionMatching.linkUserToInstitution(user.id, email);
 
     const rawToken = generateRandomToken(32);
     const tokenHash = hashToken(rawToken);

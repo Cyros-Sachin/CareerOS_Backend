@@ -9,6 +9,9 @@ import { createGapRouter } from "./modules/gap-analysis/gap.routes";
 import { createRoadmapRouter } from "./modules/roadmap/roadmap.routes";
 import { createMentorRouter } from "./modules/mentor/mentor.routes";
 import { createInterviewRouter } from "./modules/interview/interview.routes";
+import { createJobsRouter } from "./modules/jobs/jobs.routes";
+import { createBillingRouter } from "./modules/billing/billing.routes";
+import { createCollegeRouter } from "./modules/college/college.routes";
 import { errorHandler } from "./middleware/errorHandler";
 import { generalLimiter } from "./middleware/rateLimiter";
 import { pool } from "./db/pool";
@@ -23,6 +26,10 @@ export function createApp(emailService?: EmailService) {
     origin: process.env.FRONTEND_URL || "http://localhost:3000",
     credentials: true,
   }));
+
+  // Webhook route needs raw body BEFORE global JSON parser
+  app.use("/api/billing/webhook", express.raw({ type: "application/json" }));
+
   app.use(express.json({ limit: "1mb" }));
   app.use(cookieParser());
 
@@ -37,6 +44,9 @@ export function createApp(emailService?: EmailService) {
   app.use("/api/roadmap", createRoadmapRouter());
   app.use("/api/mentor", createMentorRouter());
   app.use("/api/interview", createInterviewRouter());
+  app.use("/api/jobs", createJobsRouter());
+  app.use("/api/billing", createBillingRouter());
+  app.use("/api/college", createCollegeRouter());
 
   app.get("/api/health", async (_req, res) => {
     try {

@@ -17,6 +17,7 @@ export interface ResumeRow {
   dimension_scores: Record<string, unknown> | null;
   suggestions: string[] | null;
   is_active: boolean;
+  profile_embedding: number[] | null;
   created_at: string;
   updated_at: string;
 }
