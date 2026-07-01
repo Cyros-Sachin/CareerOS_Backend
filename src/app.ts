@@ -7,6 +7,8 @@ import { createResumeRouter } from "./modules/resume/resume.routes";
 import { createSkillsRouter } from "./modules/skills/skills.routes";
 import { createGapRouter } from "./modules/gap-analysis/gap.routes";
 import { createRoadmapRouter } from "./modules/roadmap/roadmap.routes";
+import { createMentorRouter } from "./modules/mentor/mentor.routes";
+import { createInterviewRouter } from "./modules/interview/interview.routes";
 import { errorHandler } from "./middleware/errorHandler";
 import { generalLimiter } from "./middleware/rateLimiter";
 import { pool } from "./db/pool";
@@ -33,6 +35,8 @@ export function createApp(emailService?: EmailService) {
   app.use("/api/skills", createSkillsRouter());
   app.use("/api/gaps", createGapRouter());
   app.use("/api/roadmap", createRoadmapRouter());
+  app.use("/api/mentor", createMentorRouter());
+  app.use("/api/interview", createInterviewRouter());
 
   app.get("/api/health", async (_req, res) => {
     try {

@@ -48,6 +48,9 @@ const envSchema = z.object({
   ROADMAP_MAX_MONTHS: z.coerce.number().default(12),
   ROADMAP_GENERATE_RATE_LIMIT_PER_HOUR: z.coerce.number().default(5),
   AFFILIATE_REF_TAG: z.string().default("careeros"),
+
+  // Milestone 4 — AI Mentor
+  GITHUB_TOKEN: z.string().optional(),
 })
 
   .superRefine((data, ctx) => {

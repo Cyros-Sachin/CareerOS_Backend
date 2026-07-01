@@ -1223,12 +1223,275 @@ Manually regenerate a roadmap. Same flow as generate — gap analysis → AI cal
 
 ---
 
-## 14. Error Codes Reference (Additions)
+## 14. Mock Interview Endpoints
+
+All interview endpoints require `Authorization: Bearer <accessToken>`.
+
+### POST `/api/interview/start`
+
+Create a new mock interview session. Generates 5 AI questions. Requires **Pro** subscription tier.
+
+**Rate limited:** 5/hour/user
+
+**Request:**
+```json
+{
+  "mode": "technical",
+  "difficulty": "medium",
+  "topic": "DSA",
+  "language": "javascript"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `mode` | enum | ✅ | `technical`, `system_design`, or `hr` |
+| `difficulty` | enum | No | `easy`, `medium`, `hard` (technical only) |
+| `topic` | string | No | Topic focus e.g. "DSA", "Web Dev" (technical only) |
+| `language` | enum | No | `javascript`, `python`, `java`, `cpp` (technical only) |
+
+**Success (201):**
+```json
+{
+  "session": {
+    "id": "uuid",
+    "mode": "technical",
+    "difficulty": "medium",
+    "topic": "DSA",
+    "targetRole": "Software Engineer",
+    "status": "in_progress",
+    "timeLimitSeconds": 2700,
+    "startedAt": "2026-07-01T00:00:00.000Z"
+  },
+  "questions": [
+    {
+      "id": "uuid",
+      "questionOrder": 1,
+      "questionText": "Implement a function to find the longest palindrome substring...",
+      "language": "javascript"
+    }
+  ]
+}
+```
+
+**Errors:**
+| Status | Code | Meaning |
+|--------|------|---------|
+| 400 | `VALIDATION_ERROR` | Invalid request body |
+| 403 | `UPGRADE_REQUIRED` | Subscription tier is not Pro — includes upgrade-CTA payload |
+| 429 | `RATE_LIMITED` | Too many session starts |
+
+**403 Upgrade CTA payload:**
+```json
+{
+  "error": {
+    "code": "UPGRADE_REQUIRED",
+    "message": "Mock interviews are available on the Pro plan",
+    "details": {
+      "upgradeRequired": true,
+      "currentTier": "free",
+      "feature": "mock_interview"
+    }
+  }
+}
+```
+
+---
+
+### GET `/api/interview/:sessionId`
+
+Get session details with questions and any existing answers (for resume mid-session after page reload).
+
+**Success (200):**
+```json
+{
+  "session": {
+    "id": "uuid",
+    "mode": "technical",
+    "difficulty": "medium",
+    "topic": "DSA",
+    "targetRole": "Software Engineer",
+    "status": "in_progress",
+    "timeLimitSeconds": 2700,
+    "totalScore": null,
+    "startedAt": "2026-07-01T00:00:00.000Z",
+    "completedAt": null
+  },
+  "questions": [
+    {
+      "id": "uuid",
+      "questionOrder": 1,
+      "questionText": "Implement a function...",
+      "language": "javascript",
+      "answer": {
+        "answerText": "function longestPalindrome(s) { ... }",
+        "submittedAt": null,
+        "submittedLate": false,
+        "lastAutosavedAt": "2026-07-01T00:05:00.000Z",
+        "score": null,
+        "feedback": null
+      }
+    }
+  ]
+}
+```
+
+---
+
+### PATCH `/api/interview/:sessionId/answers/:questionId`
+
+Autosave answer text. No AI evaluation — just persists the text. Poll every 30s from the client.
+
+**Request:**
+```json
+{
+  "answerText": "function longestPalindrome(s) { ... }"
+}
+```
+
+**Success (200):** `{ "saved": true }`
+
+---
+
+### POST `/api/interview/:sessionId/answers/:questionId/submit`
+
+Submit final answer. Triggers real-time AI evaluation (5-dimension scoring). Scores are persisted but **not shown to user until the final report**.
+
+**Request:**
+```json
+{
+  "answerText": "function longestPalindrome(s) { ... }"
+}
+```
+
+**Success (200):**
+```json
+{
+  "submitted": true,
+  "submittedLate": false,
+  "score": {
+    "correctness_soundness": 85,
+    "complexity_tradeoff_awareness": 70,
+    "communication_clarity": 90,
+    "best_practices": 75,
+    "completeness": 80
+  },
+  "feedback": "Good approach using expand-around-center. Consider discussing Manacher's algorithm for O(n) optimization. Edge case handling for empty string is well done.",
+  "modelAnswer": "A strong reference answer for this question..."
+}
+```
+
+---
+
+### POST `/api/interview/:sessionId/complete`
+
+Complete the interview session. All 5 questions must have been submitted (returns 409 otherwise). Aggregates per-answer scores into composite, writes Interview Readiness to the active resume, marks session `completed`.
+
+**Success (200):**
+```json
+{
+  "session": {
+    "id": "uuid",
+    "mode": "technical",
+    "difficulty": "medium",
+    "topic": "DSA",
+    "targetRole": "Software Engineer",
+    "status": "completed",
+    "totalScore": 78,
+    "timeLimitSeconds": 2700,
+    "startedAt": "2026-07-01T00:00:00.000Z",
+    "completedAt": "2026-07-01T00:45:00.000Z"
+  },
+  "averageScores": {
+    "correctness_soundness": 82,
+    "complexity_tradeoff_awareness": 70,
+    "communication_clarity": 88,
+    "best_practices": 76,
+    "completeness": 78
+  },
+  "improvementAreas": [
+    { "dimension": "complexity_tradeoff_awareness", "score": 70 },
+    { "dimension": "best_practices", "score": 76 }
+  ],
+  "questions": [
+    {
+      "questionOrder": 1,
+      "questionText": "Implement...",
+      "language": "javascript",
+      "answer": {
+        "answerText": "function ...",
+        "submittedAt": "2026-07-01T00:40:00.000Z",
+        "submittedLate": false,
+        "score": { "correctness_soundness": 85, ... },
+        "feedback": "Good approach...",
+        "modelAnswer": "A strong reference answer..."
+      }
+    }
+  ]
+}
+```
+
+**Errors:**
+| Status | Code | Meaning |
+|--------|------|---------|
+| 404 | `SESSION_NOT_FOUND` | Session ID not found |
+| 400 | `SESSION_NOT_ACTIVE` | Session already completed/abandoned |
+| 409 | `SESSION_INCOMPLETE` | Not all questions have been answered |
+
+---
+
+### GET `/api/interview/:sessionId/report`
+
+Get the full post-session report. Only available after session is completed.
+
+**Success (200):** Same shape as POST `/complete` response.
+
+---
+
+### GET `/api/interview/history?limit=20`
+
+List past interview sessions, most recent first.
+
+**Success (200):**
+```json
+[
+  {
+    "id": "uuid",
+    "mode": "technical",
+    "difficulty": "medium",
+    "topic": "DSA",
+    "targetRole": "Software Engineer",
+    "status": "completed",
+    "totalScore": 78,
+    "timeLimitSeconds": 2700,
+    "questionCount": 5,
+    "answeredCount": 5,
+    "startedAt": "2026-07-01T00:00:00.000Z",
+    "completedAt": "2026-07-01T00:45:00.000Z"
+  }
+]
+```
+
+---
+
+### POST `/api/interview/:sessionId/abandon`
+
+Mark an in-progress session as abandoned (does not trigger scoring or report generation).
+
+**Success (200):** `{ "abandoned": true }`
+
+---
+
+## 16. Error Codes Reference (Additions)
 
 | Code | Status | Meaning |
 |------|--------|---------|
 | `ROADMAP_NOT_FOUND` | 404 | No active roadmap found for user |
 | `ITEM_NOT_FOUND` | 404 | Roadmap item not found |
+| `MENTOR_LIMIT_REACHED` | 429 | Daily mentor chat limit reached (free=10, student=100) |
+| `INVALID_GITHUB_USERNAME` | 400 | Could not extract a valid GitHub username from the URL |
+| `GITHUB_USER_NOT_FOUND` | 404 | GitHub user not found |
+| `GITHUB_API_ERROR` | 502 | GitHub API request failed |
 | `NOT_IMPLEMENTED` | 501 | Endpoint not yet implemented |
 
 ---
@@ -1239,10 +1502,12 @@ Manually regenerate a roadmap. Same flow as generate — gap analysis → AI cal
 |----------|-------|--------|----------|
 | `POST /api/roadmap/generate` | 5 | 1 hour | User ID |
 | `POST /api/roadmap/:roadmapId/regenerate` | 5 | 1 hour | User ID |
+| `POST /api/mentor/github-audit` | 10 | 1 hour | IP |
+| `POST /api/interview/start` | 5 | 1 hour | User ID |
 
 ---
 
-## 16. Frontend Integration — Roadmap Flow
+## 17. Frontend Integration — Roadmap Flow
 
 ```
 Client                          API                        AI Provider
@@ -1301,4 +1566,344 @@ await apiClient(`/api/roadmap/${roadmapId}/regenerate`, {
   method: "POST",
   body: JSON.stringify({ hoursPerWeek: 20 }),
 });
+```
+
+---
+
+## 18. AI Mentor Endpoints
+
+All mentor endpoints require `Authorization: Bearer <accessToken>`.
+
+### GET `/api/mentor/history`
+
+Get the last N messages for the user's conversation (loaded on page open).
+
+**Query params:**
+| Param | Type | Default | Description |
+|-------|------|---------|-------------|
+| `limit` | number | 50 | Number of messages to return |
+
+**Success (200):**
+```json
+[
+  {
+    "id": "uuid",
+    "role": "user",
+    "content": "What skills should I learn for SDE?",
+    "isCachedResponse": false,
+    "createdAt": "2026-06-29T..."
+  },
+  {
+    "id": "uuid",
+    "role": "assistant",
+    "content": "Based on your profile...",
+    "isCachedResponse": false,
+    "createdAt": "2026-06-29T..."
+  }
+]
+```
+
+---
+
+### POST `/api/mentor/chat`
+
+Send a message to the AI mentor. **Response is streamed via SSE** (Server-Sent Events).
+
+**Request:**
+```json
+{
+  "message": "What skills should I focus on for a backend engineering role?"
+}
+```
+
+**Response:** SSE stream (`Content-Type: text/event-stream`)
+
+```
+data: {"text":"Based"}
+data: {"text":" on"}
+data: {"text":" your"}
+data: {"text":" profile..."}
+data: [DONE]
+```
+
+**Heartbeat:** A `:ping` comment is sent every 15 seconds to keep the connection alive.
+
+**Error in stream (if rate-limited or error occurs):**
+```
+data: {"error":{"code":"MENTOR_LIMIT_REACHED","message":"Daily message limit (10) reached."}}
+data: [DONE]
+```
+
+**Tier limits (daily, tracked in Postgres):**
+| Tier | Daily Limit |
+|------|-------------|
+| free | 10 messages/day |
+| student | 100 messages/day |
+| pro | Unlimited |
+
+Messages served from cache or blocked by the safety filter **do not count** against the daily limit.
+
+**Caching:** Identical questions from the same user within 24 hours are served from Redis cache. Cached responses show `isCachedResponse: true` in history.
+
+---
+
+### GET `/api/mentor/suggested-prompts`
+
+Returns example questions to help users get started.
+
+**Success (200):**
+```json
+[
+  "What skills should I focus on to become a software engineer?",
+  "How can I improve my resume for FAANG companies?",
+  "What projects should I build to stand out?",
+  "How do I prepare for technical interviews?",
+  "Should I focus on frontend or backend development?",
+  "How do I choose between a startup and a big company?"
+]
+```
+
+If the user has set career goals, the first two prompts are personalized.
+
+---
+
+### POST `/api/mentor/github-audit`
+
+Analyze a public GitHub profile. Rate limited to 10/hour/user.
+
+**Request:**
+```json
+{
+  "githubUrl": "https://github.com/octocat"
+}
+```
+
+**Success (200):**
+```json
+{
+  "username": "octocat",
+  "publicRepos": 8,
+  "followers": 8000,
+  "following": 9,
+  "bio": "A robot.",
+  "company": "@github",
+  "location": "San Francisco",
+  "blog": "https://github.blog",
+  "totalStars": 250,
+  "totalForks": 120,
+  "languages": ["JavaScript", "Ruby", "Python"],
+  "topRepos": ["Hello-World", "Spoon-Knife"],
+  "profileUrl": "https://github.com/octocat",
+  "auditGeneratedAt": "2026-06-29T..."
+}
+```
+
+**Errors:**
+| Status | Code | Meaning |
+|--------|------|---------|
+| 400 | `INVALID_GITHUB_USERNAME` | URL doesn't contain a valid GitHub username |
+| 404 | `GITHUB_USER_NOT_FOUND` | GitHub user doesn't exist |
+| 502 | `GITHUB_API_ERROR` | GitHub API request failed |
+
+---
+
+## 19. Frontend Integration — AI Mentor Flow
+
+---
+
+## 20. Frontend Integration — Mock Interview Flow
+
+```
+Client                        API                          AI Provider
+  │  POST /interview/start     │                             │
+  │───────────────────────────►│                             │
+  │                            │  Check subscription_tier    │
+  │                            │  = pro (else 403)           │
+  │                            │                             │
+  │                            │  Generate 5 questions        │
+  │                            │  (target role + skill level   │
+  │                            │  + mode/difficulty)           │
+  │                            │────────────────────────────►│
+  │                            │◄────────────────────────────│
+  │                            │  Create session + questions  │
+  │◄───────────────────────────│  201 { session, questions }  │
+  │                            │                             │
+  │  (30s interval)            │                             │
+  │  PATCH .../answers/:qId    │  Autosave, no AI call       │
+  │───────────────────────────►│                             │
+  │◄───────────────────────────│  { saved: true }            │
+  │                            │                             │
+  │  POST .../submit           │  Check timer                │
+  │───────────────────────────►│  Evaluate answer (5-dim)     │
+  │                            │────────────────────────────►│
+  │                            │◄────────────────────────────│
+  │                            │  Persist score+feedback     │
+  │◄───────────────────────────│  Score + feedback           │
+  │                            │                             │
+  │  (repeat for Q2-Q5)        │                             │
+  │                            │                             │
+  │  POST .../complete         │  Aggregate 5 scores         │
+  │───────────────────────────►│  → composite total_score    │
+  │                            │  Write Interview Readiness   │
+  │                            │  → resumes.dimension_scores  │
+  │                            │  Recompose ats_score         │
+  │◄───────────────────────────│  Full report                │
+```
+
+### Mock Interview UI Integration
+
+```typescript
+// 1. Start a new interview
+const { session, questions } = await apiClient("/api/interview/start", {
+  method: "POST",
+  body: JSON.stringify({
+    mode: "technical",
+    difficulty: "medium",
+    topic: "DSA",
+    language: "javascript",
+  }),
+});
+
+// 2. Autosave every 30 seconds
+const autosaveInterval = setInterval(async () => {
+  await apiClient(`/api/interview/${session.id}/answers/${questionId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ answerText: currentText }),
+  });
+}, 30000);
+
+// 3. Submit an answer
+const evaluation = await apiClient(
+  `/api/interview/${session.id}/answers/${questionId}/submit`,
+  {
+    method: "POST",
+    body: JSON.stringify({ answerText }),
+  }
+);
+// Scores are persisted but not displayed to user yet
+
+// 4. Complete session (after all 5 submitted)
+const report = await apiClient(`/api/interview/${session.id}/complete`, {
+  method: "POST",
+});
+
+// 5. Show report data
+report.averageScores;      // 5-dimension averages
+report.improvementAreas;   // Lowest-scoring dimensions
+report.questions.forEach((q) => {
+  q.answer.score;          // Per-question score (0-100 per dimension)
+  q.answer.feedback;       // Qualitative feedback
+  q.answer.modelAnswer;    // Reference answer
+});
+
+// 6. Timer enforcement
+const deadline = new Date(session.startedAt).getTime()
+  + session.timeLimitSeconds * 1000;
+
+function isLate(): boolean {
+  return Date.now() > deadline;
+}
+```
+
+### Pro Tier Gating
+
+```typescript
+try {
+  await apiClient("/api/interview/start", { method: "POST", body: {...} });
+} catch (err) {
+  if (err.code === "UPGRADE_REQUIRED") {
+    // Show upgrade CTA with current tier info
+    showUpgradeModal(err.details.currentTier);
+    return;
+  }
+}
+```
+
+```
+Client (Browser)              API                         AI Provider
+  │  POST /mentor/chat         │                            │
+  │───────────────────────────►│                            │
+  │                            │  Rate limit check          │
+  │                            │  Stage-1 safety filter      │
+  │                            │  Cache check (SHA-256 hash) │
+  │                            │                            │
+  │                            │  [cache miss]              │
+  │                            │  Fetch profile + resume     │
+  │                            │  + last 10 messages         │
+  │                            │                            │
+  │  res.flushHeaders()        │  Stream completion          │
+  │  text/event-stream         │                            │
+  │◄───────────────────────────│◄───────────────────────────│
+  │  data: {"text":"..."}      │  Chunk 1, 2, ...            │
+  │  (repeated per chunk)      │                            │
+  │                            │  On stream end:             │
+  │                            │  Persist both messages      │
+  │                            │  Cache response (24h TTL)   │
+  │  data: [DONE]              │                            │
+```
+
+### SSE Client Implementation
+
+```typescript
+async function sendMentorMessage(message: string): Promise<void> {
+  const token = getAccessToken();
+
+  const response = await fetch(`${API_BASE}/api/mentor/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ message }),
+  });
+
+  if (!response.ok) {
+    const err = await response.json();
+    throw new ApiError(response.status, err.error?.code, err.error?.message);
+  }
+
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      if (line.startsWith("data: ")) {
+        const data = line.slice(6);
+        if (data === "[DONE]") return;
+
+        try {
+          const parsed = JSON.parse(data);
+          if (parsed.text) {
+            // Append text to your UI
+            appendToChat(parsed.text);
+          }
+          if (parsed.error) {
+            // Handle error in stream
+            showError(parsed.error.message);
+            return;
+          }
+        } catch {
+          // Skip malformed chunks
+        }
+      }
+    }
+  }
+}
+```
+
+### Mentor UI Integration Notes
+
+- **History on page load:** Call `GET /api/mentor/history` when the mentor page opens
+- **Suggested prompts:** Call `GET /api/mentor/suggested-prompts` to populate starter buttons
+- **Daily limit indicator:** Use the `X-RateLimit-Remaining` header from any response, or track via `MENTOR_LIMIT_REACHED` error
+- **Cached responses:** Messages with `isCachedResponse: true` can show a "(cached)" badge in the UI
+- **GitHub audit:** Use the non-streaming `POST /api/mentor/github-audit` endpoint with a dedicated button
 ```
