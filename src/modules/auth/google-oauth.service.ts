@@ -35,6 +35,7 @@ export class GoogleOAuthService {
     accessToken: string;
     refreshToken: string;
     user: { id: string; email: string; name: string; role: string };
+    isNewUser: boolean;
   }> {
     const { tokens } = await this.client.getToken(code);
     if (!tokens.id_token) {
@@ -59,7 +60,8 @@ export class GoogleOAuthService {
 
     let user = await repo.findByGoogleId(profile.id);
     if (user) {
-      return this.signInUser(user);
+      const signedIn = await this.signInUser(user);
+      return { ...signedIn, isNewUser: false };
     }
 
     const existingByEmail = await repo.findByEmail(profile.email);
@@ -70,7 +72,8 @@ export class GoogleOAuthService {
         [profile.id, existingByEmail.id]
       );
       const updatedUser = await repo.findById(existingByEmail.id);
-      return this.signInUser(updatedUser!);
+      const signedIn = await this.signInUser(updatedUser!);
+      return { ...signedIn, isNewUser: false };
     }
 
     user = await repo.createUser({
@@ -83,7 +86,8 @@ export class GoogleOAuthService {
     await repo.markEmailVerified(user.id);
     await this.institutionMatching.linkUserToInstitution(user.id, profile.email);
 
-    return this.signInUser(user);
+    const signedIn = await this.signInUser(user);
+    return { ...signedIn, isNewUser: true };
   }
 
   private async signInUser(user: repo.UserRow) {

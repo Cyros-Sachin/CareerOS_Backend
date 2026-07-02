@@ -1,5 +1,7 @@
-import { Pool } from "pg";
+import { Pool, types } from "pg";
 import { env } from "../config/env";
+
+types.setTypeParser(1114, (v: string) => new Date(Date.parse(v + "+0000")));
 
 export const pool = new Pool({
   connectionString: env.DATABASE_URL,

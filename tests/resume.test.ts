@@ -8,16 +8,30 @@ import { computeAtsScore } from "../src/modules/resume/scoring.service";
 import type { ParsedResumeData } from "../src/lib/ai/resume-parser.interface";
 
 class MockEmailService implements EmailService {
-  async sendEmail(): Promise<void> {
-    // no-op
+  sentEmails: { to: string; subject: string; html: string }[] = [];
+
+  async sendEmail(payload: { to: string; subject: string; html: string }): Promise<void> {
+    this.sentEmails.push(payload);
+  }
+
+  getLastEmail() {
+    return this.sentEmails[this.sentEmails.length - 1];
+  }
+
+  clear() {
+    this.sentEmails = [];
   }
 }
 
-vi.mock("../src/lib/ai", () => ({
-  resumeParser: {
-    parseResume: vi.fn().mockRejectedValue(new Error("AI not configured in tests")),
-  },
-}));
+vi.mock("../src/lib/ai", async (importOriginal) => {
+  const actual = await importOriginal() as Record<string, unknown>;
+  return {
+    ...actual,
+    resumeParser: {
+      parseResume: vi.fn().mockRejectedValue(new Error("AI not configured in tests")),
+    },
+  };
+});
 
 vi.mock("../src/lib/s3", () => ({
   s3Client: {},
@@ -47,22 +61,20 @@ beforeAll(async () => {
     .post("/api/auth/register")
     .send({ email: "resume-test-user@test.com", password: "StrongPass1", name: "Resume Test" });
 
-  const verifyRes = await request(app)
-    .get("/api/auth/verify-email")
-    .query({
-      token: "0000000000000000000000000000000000000000000000000000000000000000",
-    });
-  if (verifyRes.status !== 200) {
-    const loginRes = await request(app)
-      .post("/api/auth/login")
-      .send({ email: "resume-test-user@test.com", password: "StrongPass1" });
-    authToken = loginRes.body.accessToken;
-  } else {
-    const loginRes = await request(app)
-      .post("/api/auth/login")
-      .send({ email: "resume-test-user@test.com", password: "StrongPass1" });
-    authToken = loginRes.body.accessToken;
+  const email = mockEmail.getLastEmail();
+  if (email) {
+    const tokenMatch = email.html.match(/token=([a-f0-9]+)/);
+    if (tokenMatch) {
+      await request(app)
+        .get("/api/auth/verify-email")
+        .query({ token: tokenMatch[1] });
+    }
   }
+
+  const loginRes = await request(app)
+    .post("/api/auth/login")
+    .send({ email: "resume-test-user@test.com", password: "StrongPass1" });
+  authToken = loginRes.body.accessToken;
 });
 
 afterAll(async () => {

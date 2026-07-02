@@ -85,10 +85,12 @@ export class AuthController {
         maxAge: 7 * 24 * 60 * 60 * 1000,
         path: "/api/auth",
       });
-      res.json({
+      const params = new URLSearchParams({
         accessToken: result.accessToken,
-        user: result.user,
+        user: JSON.stringify(result.user),
+        isNewUser: String(result.isNewUser),
       });
+      res.redirect(`${env.FRONTEND_URL}/auth/google/callback?${params}`);
     } catch (err) {
       next(err);
     }

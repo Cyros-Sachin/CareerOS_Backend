@@ -79,7 +79,7 @@ export class AuthService {
   async login(email: string, password: string): Promise<{
     accessToken: string;
     refreshToken: string;
-    user: { id: string; email: string; name: string; role: string };
+    user: NonNullable<Awaited<ReturnType<typeof repo.getPublicUserProfile>>>;
   }> {
     const user = await repo.findByEmail(email);
     if (!user) {
@@ -121,10 +121,12 @@ export class AuthService {
 
     const { rawToken, tokenId } = await this.createAndStoreRefreshToken(user.id);
 
+    const profile = await repo.getPublicUserProfile(user.id);
+
     return {
       accessToken,
       refreshToken: rawToken,
-      user: { id: user.id, email: user.email, name: user.name, role: user.role },
+      user: profile!,
     };
   }
 

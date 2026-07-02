@@ -23,13 +23,14 @@ let institutionBId: string;
 let batchId: string;
 
 beforeAll(async () => {
-  await pool.query("UPDATE users SET batch_id = NULL, institution_id = NULL WHERE email LIKE 'test-%'");
+  await pool.query("UPDATE users SET batch_id = NULL WHERE batch_id IS NOT NULL");
+  await pool.query("UPDATE users SET institution_id = NULL WHERE institution_id IS NOT NULL");
   await pool.query("DELETE FROM job_applications");
   await pool.query("DELETE FROM interview_sessions");
   await pool.query("DELETE FROM roadmap_items");
   await pool.query("DELETE FROM roadmaps");
   await pool.query("DELETE FROM resumes");
-  await pool.query("DELETE FROM users WHERE email LIKE 'test-%'");
+  await pool.query("DELETE FROM users WHERE email LIKE 'test-college-%'");
   await pool.query("DELETE FROM institution_batches");
   await pool.query("DELETE FROM institutions");
   await pool.query("DELETE FROM subscription_webhook_events");
@@ -130,7 +131,7 @@ describe("College — Batch CRUD", () => {
     const orphanAdmin = await pool.query(
       `INSERT INTO users (email, password_hash, name, role, email_verified)
        VALUES ($1, $2, $3, 'institution_admin', TRUE) RETURNING id`,
-      ["test-orphan-admin@test.com", await hashPassword("TestPass123"), "Orphan Admin"]
+      ["test-college-orphan-admin@test.com", await hashPassword("TestPass123"), "Orphan Admin"]
     );
     const token = signAccessToken({
       userId: orphanAdmin.rows[0].id,
@@ -208,7 +209,7 @@ describe("College — Student Roster", () => {
     const nonConsenting = await pool.query(
       `INSERT INTO users (email, password_hash, name, role, institution_id, batch_id, degree, graduation_year, onboarding_completed, institution_data_sharing_consent)
        VALUES ($1, $2, $3, 'student', $4, $5, 'B.Tech', 2027, TRUE, FALSE) RETURNING id`,
-      ["test-non-consenting@test.com", await hashPassword("TestPass123"), "Non Consenting", institutionAId, batchId]
+      ["test-college-non-consenting@test.com", await hashPassword("TestPass123"), "Non Consenting", institutionAId, batchId]
     );
 
     const res = await request(app)
@@ -285,7 +286,7 @@ describe("College — My Institution", () => {
     const unlinked = await pool.query(
       `INSERT INTO users (email, password_hash, name, role, email_verified)
        VALUES ($1, $2, $3, 'student', TRUE) RETURNING id`,
-      ["test-unlinked@test.com", await hashPassword("TestPass123"), "Unlinked"]
+      ["test-college-unlinked@test.com", await hashPassword("TestPass123"), "Unlinked"]
     );
     const token = signAccessToken({
       userId: unlinked.rows[0].id,

@@ -2,7 +2,7 @@ import { env } from "../../../config/env";
 
 export function resetPasswordTemplate(otp: string): { subject: string; html: string } {
   return {
-    subject: "Password reset code — CareerOS",
+    subject: "Password Reset Code — CareerOS",
     html: `
       <h1>Reset your password</h1>
       <p>Use the following 6-digit code to reset your password:</p>

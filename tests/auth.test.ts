@@ -4,6 +4,7 @@ import { createApp } from "../src/app";
 import { pool } from "../src/db/pool";
 import { runMigrations } from "../src/db/migrate";
 import { EmailService } from "../src/lib/email/email.service";
+import { hashPassword } from "../src/lib/password";
 
 class MockEmailService implements EmailService {
   sentEmails: { to: string; subject: string; html: string }[] = [];
@@ -33,7 +34,7 @@ beforeAll(async () => {
   await pool.query("DELETE FROM password_reset_otps");
   await pool.query("DELETE FROM email_verification_tokens");
   await pool.query("DELETE FROM refresh_tokens");
-  await pool.query("DELETE FROM users WHERE email LIKE 'test-%@test.com'");
+  await pool.query("DELETE FROM users WHERE email LIKE 'test-auth-%@test.com'");
 });
 
 afterAll(async () => {
@@ -44,13 +45,13 @@ describe("Auth — Register", () => {
   it("should register a new user", async () => {
     const res = await request(app)
       .post("/api/auth/register")
-      .send({ email: "test-user@test.com", password: "StrongPass1", name: "Test User" });
+      .send({ email: "test-auth-user@test.com", password: "StrongPass1", name: "Test User" });
 
     expect(res.status).toBe(201);
     expect(res.body.message).toContain("Registration successful");
 
     const email = mockEmail.getLastEmail();
-    expect(email.to).toBe("test-user@test.com");
+    expect(email.to).toBe("test-auth-user@test.com");
     expect(email.subject).toContain("Verify");
 
     const tokenMatch = email.html.match(/token=([a-f0-9]+)/);
@@ -68,7 +69,7 @@ describe("Auth — Register", () => {
   it("should return generic message if email already registered", async () => {
     const res = await request(app)
       .post("/api/auth/register")
-      .send({ email: "test-user@test.com", password: "StrongPass1", name: "Test User" });
+      .send({ email: "test-auth-user@test.com", password: "StrongPass1", name: "Test User" });
 
     expect(res.status).toBe(201);
     expect(res.body.message).toContain("Registration successful");
@@ -91,11 +92,11 @@ describe("Auth — Login", () => {
   it("should login with correct credentials", async () => {
     const res = await request(app)
       .post("/api/auth/login")
-      .send({ email: "test-user@test.com", password: "StrongPass1" });
+      .send({ email: "test-auth-user@test.com", password: "StrongPass1" });
 
     expect(res.status).toBe(200);
     expect(res.body.accessToken).toBeDefined();
-    expect(res.body.user.email).toBe("test-user@test.com");
+    expect(res.body.user.email).toBe("test-auth-user@test.com");
 
     accessToken = res.body.accessToken;
     const cookies = res.headers["set-cookie"];
@@ -110,11 +111,11 @@ describe("Auth — Login", () => {
   it("should reject login for unverified email", async () => {
     await request(app)
       .post("/api/auth/register")
-      .send({ email: "test-unverified@test.com", password: "StrongPass1", name: "Unverified" });
+      .send({ email: "test-auth-unverified@test.com", password: "StrongPass1", name: "Unverified" });
 
     const res = await request(app)
       .post("/api/auth/login")
-      .send({ email: "test-unverified@test.com", password: "StrongPass1" });
+      .send({ email: "test-auth-unverified@test.com", password: "StrongPass1" });
 
     expect(res.status).toBe(403);
   });
@@ -122,7 +123,7 @@ describe("Auth — Login", () => {
   it("should reject wrong password", async () => {
     const res = await request(app)
       .post("/api/auth/login")
-      .send({ email: "test-user@test.com", password: "WrongPass1" });
+      .send({ email: "test-auth-user@test.com", password: "WrongPass1" });
 
     expect(res.status).toBe(401);
   });
@@ -130,29 +131,35 @@ describe("Auth — Login", () => {
 
 describe("Auth — Account Lockout", () => {
   it("should lock account after 5 failed attempts", async () => {
-    for (let i = 0; i < 5; i++) {
-      await request(app)
-        .post("/api/auth/login")
-        .send({ email: "test-lockout@test.com", password: "WrongPass1" });
-    }
-
-    await request(app)
-      .post("/api/auth/register")
-      .send({ email: "test-lockout@test.com", password: "StrongPass1", name: "Lockout" });
-
-    const tokenEmail = mockEmail.getLastEmail();
-    const tokenMatch = tokenEmail.html.match(/token=([a-f0-9]+)/);
-    if (tokenMatch) await request(app).get(`/api/auth/verify-email?token=${tokenMatch[1]}`);
+    const insertResult = await pool.query(
+      `INSERT INTO users (email, password_hash, name, email_verified, subscription_tier)
+       VALUES ($1, $2, $3, TRUE, 'free')
+       RETURNING id`,
+      [
+        "test-auth-lockout@test.com",
+        await hashPassword("StrongPass1"),
+        "Lockout",
+      ]
+    );
+    const lockoutUserId = insertResult.rows[0].id;
 
     for (let i = 0; i < 5; i++) {
-      await request(app)
+      const r = await request(app)
         .post("/api/auth/login")
-        .send({ email: "test-lockout@test.com", password: "WrongPass1" });
+        .send({ email: "test-auth-lockout@test.com", password: "WrongPass1" });
+      expect(r.status).toBe(401);
     }
+
+    const userAfterAttempts = await pool.query(
+      "SELECT failed_login_attempts, locked_until FROM users WHERE id = $1",
+      [lockoutUserId]
+    );
+    expect(userAfterAttempts.rows[0].failed_login_attempts).toBe(5);
+    expect(userAfterAttempts.rows[0].locked_until).not.toBeNull();
 
     const res = await request(app)
       .post("/api/auth/login")
-      .send({ email: "test-lockout@test.com", password: "StrongPass1" });
+      .send({ email: "test-auth-lockout@test.com", password: "StrongPass1" });
 
     expect(res.status).toBe(423);
   });
@@ -195,7 +202,7 @@ describe("Auth — Forgot/Reset Password", () => {
     mockEmail.clear();
     const res = await request(app)
       .post("/api/auth/forgot-password")
-      .send({ email: "test-user@test.com" });
+      .send({ email: "test-auth-user@test.com" });
 
     expect(res.status).toBe(200);
 
@@ -210,7 +217,7 @@ describe("Auth — Forgot/Reset Password", () => {
   it("should reset password with valid OTP", async () => {
     const res = await request(app)
       .post("/api/auth/reset-password")
-      .send({ email: "test-user@test.com", otp: resetOtp, newPassword: "NewStrong1" });
+      .send({ email: "test-auth-user@test.com", otp: resetOtp, newPassword: "NewStrong1" });
 
     expect(res.status).toBe(200);
   });
@@ -218,7 +225,7 @@ describe("Auth — Forgot/Reset Password", () => {
   it("should login with new password after reset", async () => {
     const res = await request(app)
       .post("/api/auth/login")
-      .send({ email: "test-user@test.com", password: "NewStrong1" });
+      .send({ email: "test-auth-user@test.com", password: "NewStrong1" });
 
     expect(res.status).toBe(200);
   });
@@ -227,7 +234,7 @@ describe("Auth — Forgot/Reset Password", () => {
     mockEmail.clear();
     await request(app)
       .post("/api/auth/forgot-password")
-      .send({ email: "test-user@test.com" });
+      .send({ email: "test-auth-user@test.com" });
 
     const email = mockEmail.getLastEmail();
     const otpMatch = email.html.match(/>(\d{6})<\/div>/);
@@ -237,12 +244,12 @@ describe("Auth — Forgot/Reset Password", () => {
       const wrongOtp = String(Number(otp) + 1 + i).padStart(6, "0");
       await request(app)
         .post("/api/auth/reset-password")
-        .send({ email: "test-user@test.com", otp: wrongOtp, newPassword: "NewStrong1" });
+        .send({ email: "test-auth-user@test.com", otp: wrongOtp, newPassword: "NewStrong1" });
     }
 
     const res = await request(app)
       .post("/api/auth/reset-password")
-      .send({ email: "test-user@test.com", otp, newPassword: "NewStrong1" });
+      .send({ email: "test-auth-user@test.com", otp, newPassword: "NewStrong1" });
 
     expect(res.status).toBe(400);
     expect(res.body.error.code).toBe("OTP_EXHAUSTED");
@@ -256,7 +263,7 @@ describe("Auth — Me", () => {
       .set("Authorization", `Bearer ${accessToken}`);
 
     expect(res.status).toBe(200);
-    expect(res.body.email).toBe("test-user@test.com");
+    expect(res.body.email).toBe("test-auth-user@test.com");
   });
 
   it("should return 401 without token", async () => {
